@@ -52,7 +52,7 @@
 
                 <Button x:Name="ZenithAiButton"
                         Click="ZenithAiButton_Click"
-                        ToolTipService.ToolTip="ZenitAI (BETA) para musica, formatos y escucha audiofila">
+                        ToolTipService.ToolTip="ZenitAI (BETA) para música, formatos y escucha audiófila">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE8D4;" FontSize="15" />
                         <TextBlock Text="ZenitAI (BETA)" />
@@ -85,13 +85,13 @@
                         <Button HorizontalAlignment="Stretch" Click="ShowMusicFoldersButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="10">
                                 <FontIcon Glyph="&#xE8B7;" FontSize="15" />
-                                <TextBlock Text="Carpetas de mÃºsica" />
+                                <TextBlock Text="Carpetas de música" />
                             </StackPanel>
                         </Button>
                         <Button HorizontalAlignment="Stretch" Click="ShowDsdLibraryButton_Click">
                             <StackPanel Orientation="Horizontal" Spacing="10">
                                 <FontIcon Glyph="&#xE142;" FontSize="15" />
-                                <TextBlock Text="Albumes DSD" />
+                                <TextBlock Text="Álbumes DSD" />
                             </StackPanel>
                         </Button>
                         <Button HorizontalAlignment="Stretch" Click="ShowHiResLibraryButton_Click">
@@ -124,11 +124,11 @@
                         <StackPanel Spacing="8">
                             <TextBlock x:Name="LibraryBrowserTitleTextBlock" Text="Explorador de biblioteca" FontSize="18" FontWeight="SemiBold" />
                             <TextBlock x:Name="LibraryBrowserSubtitleTextBlock"
-                                       Text="Agrega una carpeta de mÃºsica para escanear pistas"
+                                       Text="Agrega una carpeta de música para escanear pistas"
                                        FontSize="12"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <AutoSuggestBox x:Name="LibrarySearchBox"
-                                            PlaceholderText="Buscar canciÃ³n, Ã¡lbum o formato"
+                                            PlaceholderText="Buscar canción, álbum o formato"
                                             TextChanged="LibrarySearchBox_TextChanged">
                                 <AutoSuggestBox.QueryIcon>
                                     <FontIcon Glyph="&#xE721;" />
@@ -250,7 +250,7 @@
 
                                 <StackPanel Grid.Row="1" Spacing="6" Margin="4,0,4,4">
                                     <TextBlock x:Name="AlbumTitleTextBlock"
-                                               Text="CarÃ¡tula del Ã¡lbum"
+                                               Text="Carátula del álbum"
                                                FontSize="16"
                                                FontWeight="SemiBold"
                                                TextTrimming="CharacterEllipsis" />
@@ -455,7 +455,7 @@
                                                            FontWeight="SemiBold"
                                                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                                                 <TextBlock x:Name="LyricsTextBlock"
-                                                           Text="Sin letra local. Zenith buscarÃ¡ un archivo .lrc o .txt con el mismo nombre de la canciÃ³n."
+                                                           Text="Sin letra local. Zenith buscará un archivo .lrc o .txt con el mismo nombre de la canción."
                                                            TextWrapping="Wrap"
                                                            FontSize="14"
                                                            LineHeight="21"
@@ -491,7 +491,7 @@
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1">
                         <StackPanel Spacing="16">
-                            <TextBlock Text="Cadena de seÃ±al" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Cadena de señal" FontSize="18" FontWeight="SemiBold" />
 
                             <Grid ColumnSpacing="12" RowSpacing="14">
                                 <Grid.ColumnDefinitions>
@@ -635,7 +635,7 @@
                                 <ComboBoxItem Content="AutoEQ importado" />
                             </ComboBox>
 
-                            <Slider x:Name="PreampSlider" Minimum="-12" Maximum="12" Value="0" StepFrequency="0.5" Header="PreamplificaciÃ³n (dB)" ValueChanged="ToneSlider_ValueChanged" />
+                            <Slider x:Name="PreampSlider" Minimum="-12" Maximum="12" Value="0" StepFrequency="0.5" Header="Preamplificación (dB)" ValueChanged="ToneSlider_ValueChanged" />
                             <Slider x:Name="SubBassSlider" Minimum="-6" Maximum="6" Value="0" StepFrequency="0.5" Header="Subgraves" ValueChanged="ToneSlider_ValueChanged" />
                             <Slider x:Name="PresenceSlider" Minimum="-6" Maximum="6" Value="0" StepFrequency="0.5" Header="Presencia" ValueChanged="ToneSlider_ValueChanged" />
                             <Slider x:Name="AirSlider" Minimum="-6" Maximum="6" Value="0" StepFrequency="0.5" Header="Aire" ValueChanged="ToneSlider_ValueChanged" />
@@ -686,7 +686,7 @@
                             </ComboBox>
 
                             <ComboBox x:Name="DsdModeComboBox"
-                                      Header="Modo de reproducciÃ³n DSD"
+                                      Header="Modo de reproducción DSD"
                                       SelectedIndex="0"
                                       SelectionChanged="DsdModeComboBox_SelectionChanged"
                                       HorizontalAlignment="Stretch">
@@ -744,7 +744,7 @@
                                     Maximum="12"
                                     Value="4"
                                     StepFrequency="1"
-                                    Header="Hilos del escÃ¡ner de biblioteca"
+                                    Header="Hilos del escáner de biblioteca"
                                     ValueChanged="ScanThreadsSlider_ValueChanged" />
 
                             <StackPanel Spacing="8">
@@ -868,7 +868,7 @@
                                Text="0:00"
                                FontWeight="SemiBold"
                                TextTrimming="CharacterEllipsis" />
-                <TextBlock Text="Ruta de reproducciÃ³n" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="Ruta de reproducción" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     <TextBlock x:Name="OutputPathTextBlock"
                                Text="DAC exclusivo"
                                FontWeight="SemiBold"

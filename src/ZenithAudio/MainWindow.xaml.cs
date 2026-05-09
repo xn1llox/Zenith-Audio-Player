@@ -4,6 +4,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System.Runtime.InteropServices;
+using System.Text;
 using Windows.Devices.Enumeration;
 using Windows.Media.Core;
 using Windows.Media.Playback;
@@ -1016,7 +1017,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowDsdLibraryButton_Click(object sender, RoutedEventArgs e)
     {
-        ShowTrackBrowser("Albumes DSD", _libraryTracks.Where(track => DsdExtensions.Contains(track.Extension)));
+        ShowTrackBrowser("Álbumes DSD", _libraryTracks.Where(track => DsdExtensions.Contains(track.Extension)));
     }
 
     private void ShowHiResLibraryButton_Click(object sender, RoutedEventArgs e)
@@ -1318,7 +1319,7 @@ public sealed partial class MainWindow : Window
             CoverArtImage.Source = image;
             CoverArtImage.Visibility = Visibility.Visible;
             CoverPlaceholderPanel.Visibility = Visibility.Collapsed;
-            CoverHintTextBlock.Text = "Caratula embebida";
+            CoverHintTextBlock.Text = "Carátula embebida";
             return true;
         }
         catch (Exception)
@@ -1369,17 +1370,17 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var lines = File.ReadLines(lyricPath)
-                .ToList();
+            var lines = ReadLyricLines(lyricPath);
             _syncedLyrics = ParseSyncedLyrics(lines);
             var cleanLines = lines
                 .Select(CleanLyricLine)
+                .Select(RepairMojibake)
                 .Where(line => !string.IsNullOrWhiteSpace(line))
                 .Take(120);
 
             LyricsTextBlock.Text = string.Join(Environment.NewLine, cleanLines);
             LyricsStatusTextBlock.Text = Path.GetExtension(lyricPath).TrimStart('.').ToUpperInvariant();
-            CurrentLyricTextBlock.Text = _syncedLyrics.Count > 0 ? "Letra sincronizada lista" : "Letra sin sincronizacion";
+            CurrentLyricTextBlock.Text = _syncedLyrics.Count > 0 ? "Letra sincronizada lista" : "Letra sin sincronización";
             LyricsTextBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
         }
         catch (Exception)
@@ -1400,15 +1401,16 @@ public sealed partial class MainWindow : Window
                 return false;
             }
 
-            var lines = lyrics.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).ToList();
+            var lines = RepairMojibake(lyrics).Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).ToList();
             _syncedLyrics = ParseSyncedLyrics(lines);
             LyricsTextBlock.Text = string.Join(
                 Environment.NewLine,
                 lines.Select(CleanLyricLine)
+                    .Select(RepairMojibake)
                     .Where(line => !string.IsNullOrWhiteSpace(line))
                     .Take(120));
             LyricsStatusTextBlock.Text = "embebida";
-            CurrentLyricTextBlock.Text = _syncedLyrics.Count > 0 ? "Letra sincronizada lista" : "Letra embebida sin sincronizacion";
+            CurrentLyricTextBlock.Text = _syncedLyrics.Count > 0 ? "Letra sincronizada lista" : "Letra embebida sin sincronización";
             LyricsTextBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
             return true;
         }
@@ -1422,10 +1424,70 @@ public sealed partial class MainWindow : Window
     {
         LyricsStatusTextBlock.Text = "local";
         CurrentLyricTextBlock.Text = "Letra sincronizada no disponible";
-        LyricsTextBlock.Text = "Sin letra local. Zenith buscará un archivo .lrc o .txt con el mismo nombre de la canción.";
+        LyricsTextBlock.Text = "Sin letra local. Zenith buscar\u00e1 un archivo .lrc o .txt con el mismo nombre de la canci\u00f3n.";
         LyricsTextBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
     }
 
+    private static List<string> ReadLyricLines(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        var text = DecodeText(bytes);
+        return text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Select(RepairMojibake)
+            .ToList();
+    }
+
+    private static string DecodeText(byte[] bytes)
+    {
+        if (bytes.Length >= 3 &&
+            bytes[0] == 0xEF &&
+            bytes[1] == 0xBB &&
+            bytes[2] == 0xBF)
+        {
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        }
+
+        if (bytes.Length >= 2)
+        {
+            if (bytes[0] == 0xFF && bytes[1] == 0xFE)
+            {
+                return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+            }
+
+            if (bytes[0] == 0xFE && bytes[1] == 0xFF)
+            {
+                return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+            }
+        }
+
+        try
+        {
+            var utf8 = new UTF8Encoding(false, true).GetString(bytes);
+            return utf8.Contains('\uFFFD', StringComparison.Ordinal) ? Encoding.Latin1.GetString(bytes) : utf8;
+        }
+        catch (DecoderFallbackException)
+        {
+            return Encoding.Latin1.GetString(bytes);
+        }
+    }
+
+    private static string RepairMojibake(string text)
+    {
+        if (string.IsNullOrEmpty(text) ||
+            (!text.Contains('\u00c3', StringComparison.Ordinal) && !text.Contains('\u00c2', StringComparison.Ordinal)))
+        {
+            return text;
+        }
+
+        try
+        {
+            return Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(text));
+        }
+        catch (DecoderFallbackException)
+        {
+            return text;
+        }
+    }
     private static string CleanLyricLine(string line)
     {
         var cleaned = line.Trim();
