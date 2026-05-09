@@ -1,0 +1,6 @@
+{
+  "Provider": "NVIDIA NIM",
+  "Endpoint": "https://integrate.api.nvidia.com/v1/chat/completions",
+  "Model": "google/gemma-4-31b-it",
+  "ApiKey": ""
+}

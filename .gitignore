@@ -1,0 +1,31 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.suo
+*.cache
+*.log
+*.nupkg
+TestResults/
+artifacts/
+*.exe
+*.zip
+*.7z
+*.msi
+*.pfx
+*.cer
+*.snk
+
+# Installer redistributables are downloaded locally before packaging.
+installer/redist/
+
+# Native audio binaries are distributed separately.
+src/ZenithAudio/runtimes/*/native/*.exe
+src/ZenithAudio/runtimes/*/native/*.dll
+src/ZenithAudio/runtimes/*/native/*.lib
+src/ZenithAudio/runtimes/*/native/*.pdb
+
+# Local music/test media
+media/
+samples/
