@@ -108,6 +108,11 @@ Archivos opcionales soportados:
 
 ZenithAI guarda la configuración de API de forma local y puede configurarse desde la app. No subas claves personales de API ni archivos locales generados.
 
+## Manual de Usuario
+
+- [Manual de usuario en Markdown](docs/MANUAL_DE_USUARIO.md)
+- [Manual de usuario en PDF](docs/ZenithAudio_Manual_de_Usuario.pdf)
+
 ## Donaciones
 
 Si quieres colaborar con el proyecto y ayudar a seguir sacando actualizaciones, puedes donar por cualquiera de estos medios:
