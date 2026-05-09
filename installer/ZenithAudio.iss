@@ -1,9 +1,10 @@
 #define MyAppName "Zenith Audio"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Felipe Espinoza"
 #define MyAppExeName "ZenithAudio.exe"
 #define SourceDir "..\src\ZenithAudio\bin\Release\net8.0-windows10.0.19041.0\win-x64"
 #define DotNetDesktopRuntimeInstaller "windowsdesktop-runtime-8.0.25-win-x64.exe"
+#define WindowsAppRuntimeInstaller "WindowsAppRuntimeInstall-1.8.260416003-x64.exe"
 
 [Setup]
 AppId={{A4C11848-F4F1-4745-9F0F-6FEF6846730C}
@@ -35,6 +36,7 @@ Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; Group
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "startup-error.log"
 Source: "redist\{#DotNetDesktopRuntimeInstaller}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsDotNetDesktopRuntime
+Source: "redist\{#WindowsAppRuntimeInstaller}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\Zenith Audio"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
@@ -43,6 +45,7 @@ Name: "{autodesktop}\Zenith Audio"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 
 [Run]
 Filename: "{tmp}\{#DotNetDesktopRuntimeInstaller}"; Parameters: "/install /quiet /norestart"; StatusMsg: "Instalando .NET Desktop Runtime 8 x64..."; Check: NeedsDotNetDesktopRuntime; Flags: waituntilterminated
+Filename: "{tmp}\{#WindowsAppRuntimeInstaller}"; Parameters: "--quiet"; StatusMsg: "Instalando Windows App Runtime 1.8 x64..."; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Zenith Audio"; Flags: nowait postinstall skipifsilent
 
 [Code]
