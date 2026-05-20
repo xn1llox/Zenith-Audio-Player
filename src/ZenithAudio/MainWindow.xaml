@@ -477,7 +477,9 @@
                                     <Grid RowSpacing="14" Padding="4">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
@@ -491,7 +493,7 @@
                                                            FontSize="18"
                                                            FontWeight="SemiBold" />
                                                 <TextBlock x:Name="LabAuthenticityTextBlock"
-                                                           Text="Autenticidad: pendiente de análisis"
+                                                           Text="Autenticidad: pendiente | carga una pista y analiza"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                            TextWrapping="Wrap" />
                                             </StackPanel>
@@ -501,7 +503,48 @@
                                                     VerticalAlignment="Center" />
                                         </Grid>
 
-                                        <Border Grid.Row="1"
+                                        <Grid Grid.Row="1" ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.1*" />
+                                                <ColumnDefinition />
+                                                <ColumnDefinition />
+                                                <ColumnDefinition />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border CornerRadius="8" Padding="14" Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="Índice" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock x:Name="LabScoreTextBlock" Text="-- / 100" FontSize="28" FontWeight="SemiBold" />
+                                                    <TextBlock x:Name="LabVerdictTextBlock" Text="Sin análisis" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Grid.Column="1" CornerRadius="8" Padding="14" Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="Formato" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock x:Name="LabFormatTextBlock" Text="--" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock x:Name="LabContainerTextBlock" Text="Esperando archivo" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Grid.Column="2" CornerRadius="8" Padding="14" Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="Resolución" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock x:Name="LabResolutionTextBlock" Text="--" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="Frecuencia / bits / bitrate" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Grid.Column="3" CornerRadius="8" Padding="14" Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="Riesgo" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                    <TextBlock x:Name="LabRiskTextBlock" Text="--" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="Upsample / pérdida / DSP" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+
+                                        <Border Grid.Row="2"
                                                 CornerRadius="8"
                                                 Padding="14"
                                                 Background="#08111B"
@@ -538,17 +581,22 @@
 
                                                 <Grid Grid.Row="1">
                                                     <TextBlock Text="20 Hz" Foreground="#9FC7DA" FontSize="12" />
-                                                    <TextBlock Text="22 kHz" Foreground="#9FC7DA" FontSize="12" HorizontalAlignment="Center" />
-                                                    <TextBlock Text="96 kHz+" Foreground="#9FC7DA" FontSize="12" HorizontalAlignment="Right" />
+                                                    <TextBlock Text="22 kHz / CD brickwall" Foreground="#9FC7DA" FontSize="12" HorizontalAlignment="Center" />
+                                                    <TextBlock Text="96 kHz+ / DSD noise band" Foreground="#9FC7DA" FontSize="12" HorizontalAlignment="Right" />
                                                 </Grid>
                                             </Grid>
                                         </Border>
 
                                         <TextBlock x:Name="LabFindingTextBlock"
-                                                   Grid.Row="2"
-                                                   Text="Carga una pista y ejecuta el análisis. Esta vista queda preparada para el espectrograma real y detección de brickwall."
+                                                   Grid.Row="3"
+                                                   Text="Carga una pista y ejecuta el análisis. Zenith generará un reporte para formatos básicos, PCM sin pérdida, Hi-Res y DSD."
                                                    TextWrapping="Wrap"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="LabRecommendationTextBlock"
+                                                   Grid.Row="4"
+                                                   Text=""
+                                                   TextWrapping="Wrap"
+                                                   FontWeight="SemiBold" />
                                     </Grid>
                                 </TabViewItem>
 

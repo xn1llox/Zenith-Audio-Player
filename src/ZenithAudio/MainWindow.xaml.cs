@@ -1356,7 +1356,33 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(_currentFilePath))
         {
             LabAuthenticityTextBlock.Text = "Autenticidad: sin archivo cargado";
+            LabScoreTextBlock.Text = "-- / 100";
+            LabVerdictTextBlock.Text = "Sin análisis";
+            LabFormatTextBlock.Text = "--";
+            LabContainerTextBlock.Text = "Esperando archivo";
+            LabResolutionTextBlock.Text = "--";
+            LabRiskTextBlock.Text = "--";
             LabFindingTextBlock.Text = "Carga una pista antes de ejecutar el laboratorio Anti-Fake.";
+            LabRecommendationTextBlock.Text = string.Empty;
+            return;
+        }
+
+        var report = BuildAntiFakeReport(_currentFilePath);
+
+        LabAuthenticityTextBlock.Text = report.Authenticity;
+        LabScoreTextBlock.Text = $"{report.Score} / 100";
+        LabVerdictTextBlock.Text = report.Verdict;
+        LabFormatTextBlock.Text = report.Format;
+        LabContainerTextBlock.Text = report.Container;
+        LabResolutionTextBlock.Text = report.Resolution;
+        LabRiskTextBlock.Text = report.Risk;
+        LabFindingTextBlock.Text = report.Finding;
+        LabRecommendationTextBlock.Text = report.Recommendation;
+
+        StatusInfoBar.Severity = InfoBarSeverity.Informational;
+        StatusInfoBar.Message = $"Laboratorio Anti-Fake: reporte generado para {report.Format}. Indice preliminar {report.Score}/100.";
+        if (report.Score >= 0)
+        {
             return;
         }
 
@@ -1384,6 +1410,174 @@ public sealed partial class MainWindow : Window
         StatusInfoBar.Severity = InfoBarSeverity.Informational;
         StatusInfoBar.Message = "Laboratorio Anti-Fake: análisis preliminar completado con metadatos. Espectrograma FFT real queda preparado como siguiente módulo.";
     }
+
+    private AntiFakeReport BuildAntiFakeReport(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        var extensionLabel = extension.TrimStart('.').ToUpperInvariant();
+        var codec = CleanMetric(CodecTextBlock.Text, extensionLabel);
+        var sampleRate = CleanMetric(SampleRateTextBlock.Text, "-- kHz");
+        var bitDepth = CleanMetric(BitDepthTextBlock.Text, "-- bit");
+        var bitrate = CleanMetric(BitrateTextBlock.Text, "-- kbps");
+        var sizeLabel = GetFileSizeLabel(filePath);
+        var outputStatus = SignalBitPerfectTextBlock?.Text ?? "Sin validar";
+        var dspStatus = _toneSettings.IsActive ? "DSP/EQ activo" : "DSP en bypass";
+
+        if (extension is ".mp3" or ".aac" or ".ogg" or ".m4a")
+        {
+            var score = extension == ".mp3" ? 35 : 42;
+            return new AntiFakeReport(
+                score,
+                "Autenticidad: formato básico / con pérdida",
+                "Correcto para escucha casual; no es fuente audiófila de archivo maestro.",
+                extensionLabel,
+                $"{codec} | {sizeLabel}",
+                $"{sampleRate} | {bitrate}",
+                "Alto para auditoría Hi-Res",
+                $"El archivo {extensionLabel} usa compresión con pérdida o depende de codecs del sistema. No se considera falso: simplemente no contiene toda la información del máster original.",
+                "Usar como biblioteca diaria está bien. Para evaluación de DAC, dinámica o remasterizaciones, preferir FLAC/WAV/AIFF o DSD.");
+        }
+
+        if (extension is ".dsf" or ".dff")
+        {
+            var dsdLabel = DetectDsdRateLabel(filePath);
+            var score = _usingFallbackPlayer ? 88 : 96;
+            var risk = _usingFallbackPlayer ? "Conversión DSD -> PCM activa" : "Bajo si la cadena es nativa";
+            return new AntiFakeReport(
+                score,
+                "Autenticidad: alta | Fuente DSD detectada",
+                _usingFallbackPlayer ? "DSD válido, reproducido mediante conversión temporal a PCM." : "Ruta DSD compatible con reproducción nativa o backend dedicado.",
+                extensionLabel,
+                $"{dsdLabel} | {sizeLabel}",
+                $"{sampleRate} | 1-bit sigma-delta",
+                risk,
+                $"Archivo {extensionLabel} identificado como DSD. En un análisis FFT real debería verse ruido ultrasónico progresivo, no un corte limpio tipo PCM/CD en 22 kHz.",
+                $"Cadena actual: {outputStatus}. {dspStatus}. Para máxima pureza, usar modo exclusivo, DSP omitido y backend nativo cuando esté disponible.");
+        }
+
+        if (extension == ".iso")
+        {
+            return new AntiFakeReport(
+                92,
+                "Autenticidad: alta | Contenedor SACD ISO",
+                "La calidad depende de las pistas DSF extraídas desde el ISO.",
+                "SACD ISO",
+                $"{codec} | {sizeLabel}",
+                "DSD64 típico de SACD | 1-bit",
+                "Bajo si la extracción DSF es directa",
+                "El ISO SACD no debe convertirse con pérdida. Zenith usa extracción temporal a DSF cuando sacd_extract está disponible.",
+                "Reproducir una pista extraída y ejecutar nuevamente el reporte por pista para validar ruta DSD, buffer y salida.");
+        }
+
+        if (extension is ".flac" or ".wav" or ".aiff" or ".aif" or ".alac" or ".mqa")
+        {
+            var sampleRateValue = ParseKHz(sampleRate);
+            var score = sampleRateValue >= 88.2 ? 82 : 72;
+            var tier = sampleRateValue >= 88.2 ? "PCM Hi-Res sin pérdida" : "PCM sin pérdida estándar";
+            var risk = sampleRateValue >= 88.2 ? "Medio: requiere FFT para descartar upsample" : "Bajo: resolución coherente con CD/PCM";
+            if (extension == ".mqa" || codec.Contains("MQA", StringComparison.OrdinalIgnoreCase))
+            {
+                score = 68;
+                tier = "MQA / PCM encapsulado";
+                risk = "Medio-alto: depende de decodificación MQA";
+            }
+
+            return new AntiFakeReport(
+                score,
+                $"Autenticidad: preliminar | {tier}",
+                sampleRateValue >= 88.2 ? "El contenedor declara alta resolución; falta confirmar espectro real." : "Archivo sin pérdida, adecuado para escucha crítica estándar.",
+                extensionLabel,
+                $"{codec} | {sizeLabel}",
+                $"{sampleRate} | {bitDepth} | {bitrate}",
+                risk,
+                $"Zenith detecta {codec} con {sampleRate}, {bitDepth} y {bitrate}. El punto crítico es verificar si existe energía musical por encima de 22 kHz o si hay brickwall de fuente CD.",
+                $"Cadena actual: {outputStatus}. {dspStatus}. Para análisis serio, repetir con DSP omitido y salida exclusiva.");
+        }
+
+        return new AntiFakeReport(
+            50,
+            "Autenticidad: desconocida",
+            "Formato reproducible, pero sin perfil audiófilo específico.",
+            extensionLabel,
+            $"{codec} | {sizeLabel}",
+            $"{sampleRate} | {bitDepth} | {bitrate}",
+            "No clasificado",
+            "Zenith no tiene reglas suficientes para clasificar este formato con confianza.",
+            "Usar FLAC/WAV/AIFF/DSF para pruebas audiófilas comparables.");
+    }
+
+    private static string CleanMetric(string? value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private static double ParseKHz(string value)
+    {
+        var numeric = value
+            .Replace("kHz", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace(" ", string.Empty)
+            .Replace(',', '.');
+        return double.TryParse(numeric, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var result)
+            ? result
+            : 0;
+    }
+
+    private static string GetFileSizeLabel(string filePath)
+    {
+        try
+        {
+            var bytes = new FileInfo(filePath).Length;
+            return bytes >= 1024L * 1024L * 1024L
+                ? $"{bytes / 1024d / 1024d / 1024d:N2} GB"
+                : $"{bytes / 1024d / 1024d:N1} MB";
+        }
+        catch
+        {
+            return "tamaño no disponible";
+        }
+    }
+
+    private static string DetectDsdRateLabel(string filePath)
+    {
+        var text = filePath.ToUpperInvariant();
+        if (text.Contains("DSD1024", StringComparison.OrdinalIgnoreCase))
+        {
+            return "DSD1024";
+        }
+
+        if (text.Contains("DSD512", StringComparison.OrdinalIgnoreCase))
+        {
+            return "DSD512";
+        }
+
+        if (text.Contains("DSD256", StringComparison.OrdinalIgnoreCase))
+        {
+            return "DSD256";
+        }
+
+        if (text.Contains("DSD128", StringComparison.OrdinalIgnoreCase))
+        {
+            return "DSD128";
+        }
+
+        if (text.Contains("DSD64", StringComparison.OrdinalIgnoreCase) || text.Contains("SACD", StringComparison.OrdinalIgnoreCase))
+        {
+            return "DSD64 / SACD";
+        }
+
+        return "DSD";
+    }
+
+    private sealed record AntiFakeReport(
+        int Score,
+        string Authenticity,
+        string Verdict,
+        string Format,
+        string Container,
+        string Resolution,
+        string Risk,
+        string Finding,
+        string Recommendation);
 
     private void ApplyAdaptiveBufferForTrack(string filePath)
     {
