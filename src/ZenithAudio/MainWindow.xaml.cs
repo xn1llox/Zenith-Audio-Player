@@ -404,6 +404,11 @@ public sealed partial class MainWindow : Window
         await PlayNextTrackAsync(manual: true);
     }
 
+    private async void PreviousButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PlayPreviousTrackAsync(manual: true);
+    }
+
     private void BufferSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (!_isApplyingAdaptiveBuffer)
@@ -2453,7 +2458,7 @@ public sealed partial class MainWindow : Window
 
     private async Task PlayNextTrackAsync(bool manual)
     {
-        var nextTrack = GetNextTrack();
+        var nextTrack = GetAdjacentTrack(direction: 1, allowShuffle: _shuffleEnabled);
         if (nextTrack is null)
         {
             if (manual)
@@ -2471,16 +2476,38 @@ public sealed partial class MainWindow : Window
         PlayButton_Click(this, null!);
     }
 
-    private LibraryTrack? GetNextTrack()
+    private async Task PlayPreviousTrackAsync(bool manual)
     {
-        if (_libraryTracks.Count == 0)
+        var previousTrack = GetAdjacentTrack(direction: -1, allowShuffle: false);
+        if (previousTrack is null)
+        {
+            if (manual)
+            {
+                StatusInfoBar.Severity = InfoBarSeverity.Informational;
+                StatusInfoBar.Message = "No hay pista anterior disponible en la lista actual.";
+            }
+
+            return;
+        }
+
+        StopCurrentPlaybackForTrackChange();
+        LoadTrack(previousTrack.Path);
+        await Task.Delay(80);
+        PlayButton_Click(this, null!);
+    }
+
+    private LibraryTrack? GetAdjacentTrack(int direction, bool allowShuffle)
+    {
+        var queueSource = _visibleLibraryTracks.Count > 0 ? _visibleLibraryTracks : _libraryTracks;
+        if (queueSource.Count == 0)
         {
             return null;
         }
 
-        var playableTracks = _libraryTracks
+        var playableTracks = queueSource
             .Where(track => WindowsFallbackExtensions.Contains(track.Extension) ||
                 track.Extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
+                track.Path.StartsWith("iso://", StringComparison.OrdinalIgnoreCase) ||
                 IsNativeBackendAvailable(GetSelectedBackend(), track.Path))
             .ToList();
         if (playableTracks.Count == 0)
@@ -2495,7 +2522,7 @@ public sealed partial class MainWindow : Window
                 : playableTracks[0];
         }
 
-        if (_shuffleEnabled)
+        if (allowShuffle)
         {
             LibraryTrack candidate;
             do
@@ -2508,9 +2535,18 @@ public sealed partial class MainWindow : Window
         }
 
         var currentIndex = playableTracks.FindIndex(track => track.Path.Equals(_currentFilePath, StringComparison.OrdinalIgnoreCase));
-        return currentIndex < 0
-            ? playableTracks[0]
-            : playableTracks[(currentIndex + 1) % playableTracks.Count];
+        if (currentIndex < 0)
+        {
+            return direction > 0 ? playableTracks[0] : playableTracks[^1];
+        }
+
+        var nextIndex = (currentIndex + direction) % playableTracks.Count;
+        if (nextIndex < 0)
+        {
+            nextIndex += playableTracks.Count;
+        }
+
+        return playableTracks[nextIndex];
     }
 
     private void StopCurrentPlaybackForTrackChange()

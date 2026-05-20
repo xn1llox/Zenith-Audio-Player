@@ -49,9 +49,15 @@ public static class SacdIsoExtractor
             Directory.CreateDirectory(outputFolder);
 
             var existingTracks = GetExtractedTracks(outputFolder);
-            if (existingTracks.Count > 0)
+            if (existingTracks.Count > 1)
             {
                 return new SacdIsoExtractionResult(existingTracks, outputFolder, toolPath, "DSF ya extraidos en cache temporal.");
+            }
+
+            if (existingTracks.Count == 1)
+            {
+                Directory.Delete(outputFolder, recursive: true);
+                Directory.CreateDirectory(outputFolder);
             }
 
             var log = RunExtractor(toolPath, isoPath, outputFolder, stereo: true);
