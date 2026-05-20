@@ -269,36 +269,42 @@
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
-                            <Grid ColumnSpacing="12">
+                            <Border CornerRadius="8"
+                                    Padding="12,10"
+                                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <Grid ColumnSpacing="16">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition />
-                                    <ColumnDefinition />
-                                    <ColumnDefinition />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
-                                <Border CornerRadius="8" Padding="14" Background="{ThemeResource LayerFillColorDefaultBrush}">
-                                    <StackPanel Spacing="6">
-                                        <TextBlock Text="Modo" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock x:Name="ModeTextBlock" Text="Bit-perfect" FontSize="22" FontWeight="SemiBold" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Modo" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="ModeTextBlock" Text="Bit-perfect" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     </StackPanel>
-                                </Border>
 
-                                <Border Grid.Column="1" CornerRadius="8" Padding="14" Background="{ThemeResource LayerFillColorDefaultBrush}">
-                                    <StackPanel Spacing="6">
-                                        <TextBlock Text="Motor" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock x:Name="BackendTextBlock" Text="BASS" FontSize="22" FontWeight="SemiBold" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Motor" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="BackendTextBlock" Text="BASS" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     </StackPanel>
-                                </Border>
 
-                                <Border Grid.Column="2" CornerRadius="8" Padding="14" Background="{ThemeResource LayerFillColorDefaultBrush}">
-                                    <StackPanel Spacing="6">
-                                        <TextBlock Text="Buffer" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock x:Name="BufferTextBlock" Text="100 ms" FontSize="22" FontWeight="SemiBold" />
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="Buffer" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="BufferTextBlock" Text="100 ms" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     </StackPanel>
-                                </Border>
-                            </Grid>
+                                </Grid>
+                            </Border>
 
-                            <Grid Grid.Row="1" ColumnSpacing="14">
+                            <TabView Grid.Row="1"
+                                     IsAddTabButtonVisible="False"
+                                     CanDragTabs="False"
+                                     TabWidthMode="Equal">
+                                <TabViewItem Header="Escucha">
+                                    <Grid ColumnSpacing="14">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="1.25*" />
                                     <ColumnDefinition Width="*" />
@@ -464,7 +470,108 @@
                                         </ScrollViewer>
                                     </Grid>
                                 </Border>
-                            </Grid>
+                                    </Grid>
+                                </TabViewItem>
+
+                                <TabViewItem Header="Laboratorio Anti-Fake">
+                                    <Grid RowSpacing="14" Padding="4">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <Grid ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Text="Auditoría visual de alta resolución"
+                                                           FontSize="18"
+                                                           FontWeight="SemiBold" />
+                                                <TextBlock x:Name="LabAuthenticityTextBlock"
+                                                           Text="Autenticidad: pendiente de análisis"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1"
+                                                    Content="Analizar pista"
+                                                    Click="AnalyzeCurrentTrackButton_Click"
+                                                    VerticalAlignment="Center" />
+                                        </Grid>
+
+                                        <Border Grid.Row="1"
+                                                CornerRadius="8"
+                                                Padding="14"
+                                                Background="#08111B"
+                                                BorderBrush="#2F6F9F"
+                                                BorderThickness="1">
+                                            <Grid RowSpacing="10">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="*" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+
+                                                <Grid ColumnSpacing="3" VerticalAlignment="Stretch">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition />
+                                                        <ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Rectangle Grid.Column="0" Fill="#12324A" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="1" Fill="#174B65" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="2" Fill="#1F6F86" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="3" Fill="#3B9C94" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="4" Fill="#57B26C" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="5" Fill="#9CC75A" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="6" Fill="#DBB34B" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="7" Fill="#C8793A" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="8" Fill="#226E9D" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="9" Fill="#1C587D" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="10" Fill="#194666" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="11" Fill="#14384F" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="12" Fill="#102D43" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="13" Fill="#0E2639" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="14" Fill="#0B2030" RadiusX="2" RadiusY="2" />
+                                                    <Rectangle Grid.Column="15" Fill="#091A28" RadiusX="2" RadiusY="2" />
+                                                </Grid>
+
+                                                <Grid Grid.Row="1">
+                                                    <TextBlock Text="20 Hz" Foreground="#9FC7DA" FontSize="12" />
+                                                    <TextBlock Text="22 kHz" Foreground="#9FC7DA" FontSize="12" HorizontalAlignment="Center" />
+                                                    <TextBlock Text="96 kHz+" Foreground="#9FC7DA" FontSize="12" HorizontalAlignment="Right" />
+                                                </Grid>
+                                            </Grid>
+                                        </Border>
+
+                                        <TextBlock x:Name="LabFindingTextBlock"
+                                                   Grid.Row="2"
+                                                   Text="Carga una pista y ejecuta el análisis. Esta vista queda preparada para el espectrograma real y detección de brickwall."
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                </TabViewItem>
+
+                                <TabViewItem Header="Letras">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="4">
+                                        <StackPanel Spacing="12">
+                                            <TextBlock Text="Letra sincronizada"
+                                                       FontSize="18"
+                                                       FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Text, ElementName=CurrentLyricTextBlock}"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="22"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                            <TextBlock Text="{Binding Text, ElementName=LyricsTextBlock}"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="14"
+                                                       LineHeight="21"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                            </TabView>
                         </Grid>
                     </Grid>
 
@@ -478,6 +585,7 @@
                              Title="Estado"
                              Message="Listo"
                              Severity="Informational"
+                             Background="{ThemeResource LayerFillColorDefaultBrush}"
                              IsOpen="True" />
                 </Grid>
             </Border>
@@ -491,7 +599,23 @@
                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1">
                         <StackPanel Spacing="16">
-                            <TextBlock Text="Cadena de señal" FontSize="18" FontWeight="SemiBold" />
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition />
+                                </Grid.ColumnDefinitions>
+                                <Ellipse x:Name="BitPerfectStatusLed"
+                                         Width="12"
+                                         Height="12"
+                                         Fill="#9AA0A6"
+                                         VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock Text="Cadena de señal" FontSize="18" FontWeight="SemiBold" />
+                                    <TextBlock Text="Estado técnico del renderizado"
+                                               FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </Grid>
 
                             <Grid ColumnSpacing="12" RowSpacing="14">
                                 <Grid.ColumnDefinitions>
@@ -529,6 +653,46 @@
                                     <TextBlock x:Name="CodecTextBlock" Text="Esperando archivo" FontSize="18" FontWeight="SemiBold" />
                                 </StackPanel>
                             </Grid>
+
+                            <Border CornerRadius="6"
+                                    Padding="12"
+                                    Background="#10141D"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Flujo de bits"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <Grid ColumnSpacing="6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition />
+                                        </Grid.ColumnDefinitions>
+
+                                        <Border x:Name="SourceFlowPill" CornerRadius="6" Padding="8,7" Background="#182235" BorderBrush="#3A465C" BorderThickness="1">
+                                            <TextBlock Text="Archivo" HorizontalAlignment="Center" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                        <TextBlock Grid.Column="1" Text=">" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <Border x:Name="DecoderFlowPill" Grid.Column="2" CornerRadius="6" Padding="8,7" Background="#182235" BorderBrush="#3A465C" BorderThickness="1">
+                                            <TextBlock Text="Decoder" HorizontalAlignment="Center" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                        <TextBlock Grid.Column="3" Text=">" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <Border x:Name="DspFlowPill" Grid.Column="4" CornerRadius="6" Padding="8,7" Background="#182235" BorderBrush="#3A465C" BorderThickness="1">
+                                            <TextBlock Text="DSP" HorizontalAlignment="Center" FontSize="12" FontWeight="SemiBold" />
+                                        </Border>
+                                        <TextBlock Grid.Column="5" Text=">" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                        <Border x:Name="OutputFlowPill" Grid.Column="6" CornerRadius="6" Padding="8,7" Background="#182235" BorderBrush="#3A465C" BorderThickness="1">
+                                            <TextBlock Text="Salida" HorizontalAlignment="Center" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        </Border>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
 
                             <Border CornerRadius="6"
                                     Padding="12"

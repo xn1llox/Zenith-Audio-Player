@@ -1256,6 +1256,7 @@ public sealed partial class MainWindow : Window
             SignalBitPerfectTextBlock.Text = "Sin archivo cargado";
             SignalDitherTextBlock.Text = GetDitherPolicyLabel();
             SignalBufferTextBlock.Text = $"{(int)(BufferSlider?.Value ?? 100)} ms | {_bufferProfile}";
+            UpdateSignalVisualState(hasTrack: false);
             return;
         }
 
@@ -1302,6 +1303,86 @@ public sealed partial class MainWindow : Window
         SignalBitPerfectTextBlock.Text = GetBitPerfectStatus(_currentFilePath, decode);
         SignalDitherTextBlock.Text = GetDitherStatus(_currentFilePath);
         SignalBufferTextBlock.Text = $"{(int)(BufferSlider?.Value ?? 100)} ms | {_bufferProfile}";
+        UpdateSignalVisualState(hasTrack: true);
+    }
+
+    private void UpdateSignalVisualState(bool hasTrack)
+    {
+        var status = SignalBitPerfectTextBlock?.Text ?? string.Empty;
+        var strict = status.Contains("Probable bit-perfect", StringComparison.OrdinalIgnoreCase);
+        var dspActive = _toneSettings.IsActive;
+        var warning = status.Contains("No confirmado", StringComparison.OrdinalIgnoreCase) ||
+                      status.Contains("Windows", StringComparison.OrdinalIgnoreCase);
+        var error = status.Contains("No bit-perfect", StringComparison.OrdinalIgnoreCase) ||
+                    status.Contains("convertido", StringComparison.OrdinalIgnoreCase);
+
+        if (BitPerfectStatusLed is not null)
+        {
+            BitPerfectStatusLed.Fill = new SolidColorBrush(
+                strict ? Microsoft.UI.ColorHelper.FromArgb(255, 0, 210, 168) :
+                dspActive || warning ? Microsoft.UI.ColorHelper.FromArgb(255, 245, 184, 65) :
+                error ? Microsoft.UI.ColorHelper.FromArgb(255, 235, 84, 84) :
+                Microsoft.UI.ColorHelper.FromArgb(255, 154, 160, 166));
+        }
+
+        SetSignalFlowPill(SourceFlowPill, hasTrack, hasTrack && DsdExtensions.Contains(Path.GetExtension(_currentFilePath ?? string.Empty)));
+        SetSignalFlowPill(DecoderFlowPill, hasTrack, _usingFallbackPlayer);
+        SetSignalFlowPill(DspFlowPill, hasTrack && dspActive, hasTrack && dspActive);
+        SetSignalFlowPill(OutputFlowPill, hasTrack, hasTrack && (!ExclusiveModeToggle.IsOn || _usingFallbackPlayer));
+    }
+
+    private static void SetSignalFlowPill(Border? pill, bool active, bool attention)
+    {
+        if (pill is null)
+        {
+            return;
+        }
+
+        pill.Background = new SolidColorBrush(active
+            ? attention
+                ? Microsoft.UI.ColorHelper.FromArgb(255, 68, 50, 15)
+                : Microsoft.UI.ColorHelper.FromArgb(255, 12, 60, 78)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 24, 34, 53));
+        pill.BorderBrush = new SolidColorBrush(active
+            ? attention
+                ? Microsoft.UI.ColorHelper.FromArgb(255, 221, 166, 55)
+                : Microsoft.UI.ColorHelper.FromArgb(255, 94, 191, 255)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 58, 70, 92));
+        pill.Opacity = active ? 1.0 : 0.55;
+    }
+
+    private void AnalyzeCurrentTrackButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_currentFilePath))
+        {
+            LabAuthenticityTextBlock.Text = "Autenticidad: sin archivo cargado";
+            LabFindingTextBlock.Text = "Carga una pista antes de ejecutar el laboratorio Anti-Fake.";
+            return;
+        }
+
+        var extension = Path.GetExtension(_currentFilePath).ToUpperInvariant();
+        var sampleRate = SampleRateTextBlock.Text;
+        var bitDepth = BitDepthTextBlock.Text;
+        var codec = CodecTextBlock.Text;
+
+        if (DsdExtensions.Contains(Path.GetExtension(_currentFilePath)))
+        {
+            LabAuthenticityTextBlock.Text = "Autenticidad: alta | Fuente DSD detectada";
+            LabFindingTextBlock.Text = $"Archivo {extension} con ruta DSD. Zenith no detecta corte PCM por metadatos; el siguiente paso técnico es medir espectro real y ruido ultrasónico con FFT.";
+        }
+        else if (HiResPcmExtensions.Contains(Path.GetExtension(_currentFilePath)))
+        {
+            LabAuthenticityTextBlock.Text = "Autenticidad: preliminar | PCM Hi-Res";
+            LabFindingTextBlock.Text = $"Codec {codec}, frecuencia {sampleRate}, profundidad {bitDepth}. Recomendado: análisis espectral para confirmar ausencia de brickwall en 22 kHz y clipping intersample.";
+        }
+        else
+        {
+            LabAuthenticityTextBlock.Text = "Autenticidad: no Hi-Res";
+            LabFindingTextBlock.Text = $"Formato {extension}. Puede reproducirse correctamente, pero no corresponde a una fuente audiófila sin pérdida para auditoría Hi-Res.";
+        }
+
+        StatusInfoBar.Severity = InfoBarSeverity.Informational;
+        StatusInfoBar.Message = "Laboratorio Anti-Fake: análisis preliminar completado con metadatos. Espectrograma FFT real queda preparado como siguiente módulo.";
     }
 
     private void ApplyAdaptiveBufferForTrack(string filePath)
