@@ -148,6 +148,42 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    public async Task OpenAndPlayFileAsync(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return;
+        }
+
+        var extension = Path.GetExtension(filePath);
+        if (!SupportedAudioExtensions.Contains(extension))
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            StatusInfoBar.Message = $"Formato no soportado para apertura directa: {extension}";
+            return;
+        }
+
+        StopCurrentPlaybackForTrackChange();
+
+        if (extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
+        {
+            await OpenIsoImageAsync(filePath);
+            var firstTrack = _visibleLibraryTracks.FirstOrDefault();
+            if (firstTrack is not null && !firstTrack.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
+            {
+                LoadTrack(firstTrack.Path);
+                await Task.Delay(80);
+                PlayButton_Click(this, null!);
+            }
+
+            return;
+        }
+
+        LoadTrack(filePath);
+        await Task.Delay(80);
+        PlayButton_Click(this, null!);
+    }
+
     private async void OpenFileButton_Click(object sender, RoutedEventArgs e)
     {
         var picker = new FileOpenPicker

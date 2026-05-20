@@ -1,5 +1,5 @@
 #define MyAppName "Zenith Audio"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "Felipe Espinoza"
 #define MyAppExeName "ZenithAudio.exe"
 #define SourceDir "..\src\ZenithAudio\bin\Release\net8.0-windows10.0.19041.0\win-x64"
