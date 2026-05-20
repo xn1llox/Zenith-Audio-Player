@@ -93,6 +93,8 @@ public sealed partial class MainWindow : Window
     private bool _vuUsesAnalyzer;
     private readonly Random _shuffleRandom = new();
     private bool _shuffleEnabled = true;
+    private bool _isApplyingAdaptiveBuffer;
+    private string _bufferProfile = "manual";
 
     public MainWindow()
     {
@@ -239,6 +241,7 @@ public sealed partial class MainWindow : Window
 
         var backend = GetSelectedBackend();
         BackendTextBlock.Text = backend == AudioBackend.BassWasapi ? "BASS" : "MPV";
+        ApplyAdaptiveBufferForTrack(playbackFilePath);
         OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "DAC exclusivo" : "Windows compartido";
         PlayButton.IsEnabled = false;
         PauseButton.IsEnabled = false;
@@ -278,6 +281,7 @@ public sealed partial class MainWindow : Window
                     ? "MPV compartido max"
                     : ExclusiveModeToggle.IsOn ? "DAC exclusivo" : "Windows compartido";
                 UpdateSignalChain("Decodificación nativa");
+                WritePlaybackAuditLog(playbackFilePath, "Nativo");
             }
             else
             {
@@ -402,10 +406,17 @@ public sealed partial class MainWindow : Window
 
     private void BufferSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
+        if (!_isApplyingAdaptiveBuffer)
+        {
+            _bufferProfile = "manual";
+        }
+
         if (BufferTextBlock is not null)
         {
             BufferTextBlock.Text = $"{(int)e.NewValue} ms";
         }
+
+        UpdateSignalChain();
     }
 
     private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -870,6 +881,13 @@ public sealed partial class MainWindow : Window
 
         BufferSlider.Value = e.NewValue;
         BufferTextBlock.Text = $"{(int)e.NewValue} ms";
+        _bufferProfile = "latencia objetivo";
+        UpdateSignalChain();
+    }
+
+    private void DitherPolicyComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateSignalChain();
     }
 
     private void ToneControl_Changed(object sender, RoutedEventArgs e)
@@ -1221,7 +1239,10 @@ public sealed partial class MainWindow : Window
         if (SignalSourceTextBlock is null ||
             SignalDecodeTextBlock is null ||
             SignalDspTextBlock is null ||
-            SignalOutputTextBlock is null)
+            SignalOutputTextBlock is null ||
+            SignalBitPerfectTextBlock is null ||
+            SignalDitherTextBlock is null ||
+            SignalBufferTextBlock is null)
         {
             return;
         }
@@ -1232,11 +1253,15 @@ public sealed partial class MainWindow : Window
             SignalDecodeTextBlock.Text = "Inactivo";
             SignalDspTextBlock.Text = _toneSettings.IsActive ? "Tono activo" : "Bypass";
             SignalOutputTextBlock.Text = GetSignalOutputLabel();
+            SignalBitPerfectTextBlock.Text = "Sin archivo cargado";
+            SignalDitherTextBlock.Text = GetDitherPolicyLabel();
+            SignalBufferTextBlock.Text = $"{(int)(BufferSlider?.Value ?? 100)} ms | {_bufferProfile}";
             return;
         }
 
-        var extension = Path.GetExtension(_currentFilePath).TrimStart('.').ToUpperInvariant();
-        var sourceRate = DsdExtensions.Contains(Path.GetExtension(_currentFilePath))
+        var currentExtension = Path.GetExtension(_currentFilePath);
+        var extension = currentExtension.TrimStart('.').ToUpperInvariant();
+        var sourceRate = DsdExtensions.Contains(currentExtension)
             ? "Fuente DSD"
             : SampleRateTextBlock.Text;
         SignalSourceTextBlock.Text = $"{extension} | {sourceRate}";
@@ -1245,9 +1270,9 @@ public sealed partial class MainWindow : Window
         var decode = decodeOverride;
         if (string.IsNullOrWhiteSpace(decode))
         {
-            if (_usingFallbackPlayer && DsdExtensions.Contains(Path.GetExtension(_currentFilePath)))
+            if (_usingFallbackPlayer && DsdExtensions.Contains(currentExtension))
             {
-                decode = "Decodificación DSF en stream";
+                decode = "Decodificación DSD a PCM en stream";
             }
             else if (_usingFallbackPlayer)
             {
@@ -1257,9 +1282,9 @@ public sealed partial class MainWindow : Window
             {
                 decode = backend == AudioBackend.MpvWasapi ? "MPV WASAPI" : "BASS WASAPI";
             }
-            else if (DsdExtensions.Contains(Path.GetExtension(_currentFilePath)))
+            else if (DsdExtensions.Contains(currentExtension))
             {
-                decode = Path.GetExtension(_currentFilePath).Equals(".dsf", StringComparison.OrdinalIgnoreCase)
+                decode = currentExtension.Equals(".dsf", StringComparison.OrdinalIgnoreCase)
                     ? "DSF -> PCM en RAM"
                     : "DSD nativo requerido";
             }
@@ -1274,6 +1299,128 @@ public sealed partial class MainWindow : Window
             ? $"EQ de tono | {ToneSummaryTextBlock.Text}"
             : "Bypass | bit-transparente";
         SignalOutputTextBlock.Text = GetSignalOutputLabel();
+        SignalBitPerfectTextBlock.Text = GetBitPerfectStatus(_currentFilePath, decode);
+        SignalDitherTextBlock.Text = GetDitherStatus(_currentFilePath);
+        SignalBufferTextBlock.Text = $"{(int)(BufferSlider?.Value ?? 100)} ms | {_bufferProfile}";
+    }
+
+    private void ApplyAdaptiveBufferForTrack(string filePath)
+    {
+        if (BufferSlider is null || BufferTextBlock is null)
+        {
+            return;
+        }
+
+        var recommended = GetRecommendedBufferMilliseconds(filePath);
+        if ((int)BufferSlider.Value >= recommended)
+        {
+            _bufferProfile = GetBufferProfileLabel(filePath, (int)BufferSlider.Value);
+            return;
+        }
+
+        _isApplyingAdaptiveBuffer = true;
+        BufferSlider.Value = recommended;
+        _isApplyingAdaptiveBuffer = false;
+        BufferTextBlock.Text = $"{recommended} ms";
+        _bufferProfile = GetBufferProfileLabel(filePath, recommended);
+    }
+
+    private static int GetRecommendedBufferMilliseconds(string filePath)
+    {
+        var extension = Path.GetExtension(filePath);
+        if (extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
+        {
+            return 350;
+        }
+
+        if (extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".dff", StringComparison.OrdinalIgnoreCase))
+        {
+            var sizeGb = new FileInfo(filePath).Length / 1024d / 1024d / 1024d;
+            return sizeGb switch
+            {
+                >= 3.0 => 500,
+                >= 1.5 => 350,
+                _ => 250
+            };
+        }
+
+        return 100;
+    }
+
+    private static string GetBufferProfileLabel(string filePath, int bufferMilliseconds)
+    {
+        var extension = Path.GetExtension(filePath);
+        if (extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".dff", StringComparison.OrdinalIgnoreCase))
+        {
+            return bufferMilliseconds >= 350 ? "DSD extremo" : "DSD estable";
+        }
+
+        if (extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SACD/ISO";
+        }
+
+        return bufferMilliseconds <= 120 ? "PCM baja latencia" : "PCM estable";
+    }
+
+    private string GetBitPerfectStatus(string filePath, string? decode)
+    {
+        if (_toneSettings.IsActive)
+        {
+            return "No bit-perfect: DSP/EQ activo";
+        }
+
+        if (_usingFallbackPlayer)
+        {
+            return DsdExtensions.Contains(Path.GetExtension(filePath))
+                ? "No bit-perfect: DSD convertido a PCM"
+                : "No confirmado: Windows Media Foundation";
+        }
+
+        if (!ExclusiveModeToggle.IsOn)
+        {
+            return "No confirmado: modo compartido";
+        }
+
+        if (decode?.Contains("nativa", StringComparison.OrdinalIgnoreCase) == true ||
+            decode?.Contains("BASS WASAPI", StringComparison.OrdinalIgnoreCase) == true ||
+            decode?.Contains("MPV WASAPI", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return "Probable bit-perfect: salida exclusiva sin DSP";
+        }
+
+        return "No confirmado";
+    }
+
+    private string GetDitherStatus(string filePath)
+    {
+        var policy = DitherPolicyComboBox?.SelectedIndex ?? 2;
+        var label = GetDitherPolicyLabel();
+        if (policy == 0)
+        {
+            return $"{label} | truncamiento manual";
+        }
+
+        if (DsdExtensions.Contains(Path.GetExtension(filePath)) && _usingFallbackPlayer)
+        {
+            return $"{label} | aplicable al bajar a PCM fijo";
+        }
+
+        return $"{label} | sin reducción detectada";
+    }
+
+    private string GetDitherPolicyLabel()
+    {
+        return (DitherPolicyComboBox?.SelectedIndex ?? 2) switch
+        {
+            0 => "Nunca",
+            1 => "Siempre",
+            2 => "Solo al reducir bits",
+            3 => "Automático audiófilo",
+            _ => "Solo al reducir bits"
+        };
     }
 
     private void UpdateNowPlayingVisuals(string filePath)
@@ -2177,6 +2324,8 @@ public sealed partial class MainWindow : Window
         {
             UpdateSignalChain("Windows Media Foundation");
         }
+
+        WritePlaybackAuditLog(filePath, "Windows fallback");
     }
 
     private void CleanupTemporaryFallbackFile()
@@ -2187,6 +2336,42 @@ public sealed partial class MainWindow : Window
         }
 
         _temporaryFallbackFilePath = null;
+    }
+
+    private void WritePlaybackAuditLog(string filePath, string route)
+    {
+        try
+        {
+            var auditDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ZenithAudio",
+                "Audit");
+            Directory.CreateDirectory(auditDirectory);
+
+            var line =
+                $"{DateTimeOffset.Now:O}\t" +
+                $"Ruta={route}\t" +
+                $"Archivo={filePath}\t" +
+                $"Backend={BackendTextBlock.Text}\t" +
+                $"Modo={ModeTextBlock.Text}\t" +
+                $"Salida={OutputPathTextBlock.Text}\t" +
+                $"Buffer={(int)(BufferSlider?.Value ?? 100)}ms\t" +
+                $"PerfilBuffer={_bufferProfile}\t" +
+                $"DSP={SignalDspTextBlock.Text}\t" +
+                $"Dither={SignalDitherTextBlock.Text}\t" +
+                $"BitPerfect={SignalBitPerfectTextBlock.Text}";
+
+            File.AppendAllText(
+                Path.Combine(auditDirectory, "playback-audit.tsv"),
+                line + Environment.NewLine,
+                Encoding.UTF8);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private void CleanupAllTemporaryFallbackFiles()

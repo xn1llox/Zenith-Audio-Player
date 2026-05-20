@@ -587,6 +587,45 @@
                                                    FontWeight="SemiBold"
                                                    TextTrimming="CharacterEllipsis" />
                                     </Grid>
+
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="76" />
+                                            <ColumnDefinition />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Bit-perfect" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="SignalBitPerfectTextBlock"
+                                                   Grid.Column="1"
+                                                   Text="Sin validar"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap" />
+                                    </Grid>
+
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="76" />
+                                            <ColumnDefinition />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Dither" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="SignalDitherTextBlock"
+                                                   Grid.Column="1"
+                                                   Text="Auto"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="76" />
+                                            <ColumnDefinition />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="Buffer" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="SignalBufferTextBlock"
+                                                   Grid.Column="1"
+                                                   Text="100 ms | manual"
+                                                   FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Grid>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -694,6 +733,17 @@
                                 <ComboBoxItem Content="Solo DSD nativo" />
                                 <ComboBoxItem Content="DoP sobre PCM" />
                                 <ComboBoxItem Content="Convertir DSD a PCM (requiere decodificador)" />
+                            </ComboBox>
+
+                            <ComboBox x:Name="DitherPolicyComboBox"
+                                      Header="Dither"
+                                      SelectedIndex="2"
+                                      SelectionChanged="DitherPolicyComboBox_SelectionChanged"
+                                      HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="Nunca" />
+                                <ComboBoxItem Content="Siempre" />
+                                <ComboBoxItem Content="Solo al reducir bits" />
+                                <ComboBoxItem Content="Automático audiófilo" />
                             </ComboBox>
 
                             <StackPanel Spacing="8">
