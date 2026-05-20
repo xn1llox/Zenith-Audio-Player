@@ -34,9 +34,12 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: checkedonce
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "startup-error.log"
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "startup-error.log,publish\*"
 Source: "redist\{#DotNetDesktopRuntimeInstaller}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: NeedsDotNetDesktopRuntime
 Source: "redist\{#WindowsAppRuntimeInstaller}"; DestDir: "{tmp}"; Flags: deleteafterinstall
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\*"
 
 [Icons]
 Name: "{group}\Zenith Audio"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
@@ -49,6 +52,39 @@ Filename: "{tmp}\{#WindowsAppRuntimeInstaller}"; Parameters: "--quiet"; StatusMs
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Zenith Audio"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function GetInstalledZenithVersion(var InstalledVersion: String): Boolean;
+begin
+  Result :=
+    RegQueryStringValue(
+      HKLM,
+      'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A4C11848-F4F1-4745-9F0F-6FEF6846730C}_is1',
+      'DisplayVersion',
+      InstalledVersion) or
+    RegQueryStringValue(
+      HKLM32,
+      'Software\Microsoft\Windows\CurrentVersion\Uninstall\{A4C11848-F4F1-4745-9F0F-6FEF6846730C}_is1',
+      'DisplayVersion',
+      InstalledVersion);
+end;
+
+function InitializeSetup: Boolean;
+var
+  InstalledVersion: String;
+begin
+  Result := True;
+
+  if GetInstalledZenithVersion(InstalledVersion) then
+  begin
+    MsgBox(
+      'Zenith Audio ya está instalado en este sistema.' + #13#10 + #13#10 +
+      'Versión instalada: ' + InstalledVersion + #13#10 +
+      'Versión del instalador: {#MyAppVersion}' + #13#10 + #13#10 +
+      'El instalador actualizará los archivos de la aplicación, eliminará archivos antiguos del directorio instalado y mantendrá la configuración local del usuario.',
+      mbInformation,
+      MB_OK);
+  end;
+end;
+
 function NeedsDotNetDesktopRuntime: Boolean;
 var
   ValueNames: TArrayOfString;

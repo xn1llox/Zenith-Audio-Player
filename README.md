@@ -1,12 +1,14 @@
 # Zenith Audio Player
 
-Zenith Audio Player es un reproductor de música para Windows creado con C#, WinUI 3, XAML y Windows App SDK. El proyecto está enfocado en bibliotecas locales de alta resolución, reproducción DSD/DSF, soporte para extracción de SACD ISO, configuración de dispositivos de audio, visualización tipo audiófila, letras, carátulas y un asistente opcional llamado ZenithAI.
+Zenith Audio Player es un reproductor de música para Windows creado con C#, WinUI 3, XAML y Windows App SDK. El proyecto está enfocado en bibliotecas locales de alta resolución, reproducción DSD/DSF, extracción SACD ISO, configuración de dispositivos de audio, visualización audiófila, letras, carátulas y un asistente opcional llamado ZenithAI.
 
-<img width="1917" height="1029" alt="image" src="https://github.com/user-attachments/assets/6be59d53-a888-4d9e-8b76-4038f3ba6f7c" />
+<img width="1917" height="1029" alt="Zenith Audio Player" src="https://github.com/user-attachments/assets/6be59d53-a888-4d9e-8b76-4038f3ba6f7c" />
 
 ## Características
 
 - Interfaz moderna con WinUI 3 para Windows 10 y Windows 11.
+- Dashboard audiófilo con pestañas de Escucha, Laboratorio Anti-Fake y Letras.
+- Cadena de señal con LED de estado bit-perfect y flujo Archivo > Decoder > DSP > Salida.
 - Escaneo de biblioteca local para FLAC, WAV, MP3, M4A, DSF/DFF y flujos SACD ISO.
 - Selector de dispositivo de salida usando los dispositivos detectados por Windows.
 - Conversión DSD a PCM cuando el equipo no tiene DAC o soporte DSD nativo.
@@ -64,6 +66,21 @@ Notas:
 - Los formatos disponibles pueden variar según el backend activo y los codecs del sistema.
 - MPV y BASS son backends experimentales/opcionales y sus binarios nativos no se distribuyen dentro del repositorio.
 
+## Instalador y Actualizaciones
+
+El instalador oficial se publica en GitHub Releases como archivo `.exe` para Windows x64.
+
+Desde la versión `1.0.4`, el instalador:
+
+- Detecta si Zenith Audio ya está instalado en el sistema.
+- Muestra la versión instalada y la versión del instalador antes de continuar.
+- Actualiza los archivos de la aplicación en el mismo directorio.
+- Elimina archivos antiguos del directorio instalado antes de copiar los nuevos.
+- Mantiene la configuración local del usuario guardada fuera del directorio de instalación.
+- Instala o repara .NET Desktop Runtime 8 y Windows App Runtime 1.8 cuando corresponde.
+
+La configuración local, cachés temporales y datos generados por el usuario se guardan en las rutas de usuario de Windows, no dentro de `Program Files`. El proceso de actualización limpia solamente el directorio de instalación de la app.
+
 ## Requisitos Para Desarrollo
 
 - .NET 8 SDK.
@@ -79,14 +96,15 @@ dotnet build .\src\ZenithAudio\ZenithAudio.csproj -c Release -r win-x64
 dotnet run --project .\src\ZenithAudio\ZenithAudio.csproj -c Release
 ```
 
-## Instalador
+## Crear Instalador
 
 El script del instalador está en `installer/ZenithAudio.iss`.
 
-Antes de compilar el instalador, descarga los redistribuibles necesarios:
+Antes de compilar el instalador, prepara los redistribuibles necesarios:
 
 ```powershell
 .\scripts\Prepare-InstallerRedist.ps1
+dotnet publish .\src\ZenithAudio\ZenithAudio.csproj -c Release -r win-x64 --self-contained false
 & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' .\installer\ZenithAudio.iss
 ```
 
