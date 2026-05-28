@@ -1,12 +1,14 @@
 # Manual de Usuario de Zenith Audio Player
 
-Versión del manual: 1.0  
+Versión del manual: 1.0.6  
 Aplicación: Zenith Audio Player  
 Sistema objetivo: Windows 10/11 64 bits
 
 ## 1. Qué es Zenith Audio
 
-Zenith Audio Player es un reproductor de música para Windows orientado a bibliotecas locales de alta resolución. Está diseñado para reproducir FLAC, WAV, AIFF, MP3, AAC/M4A, DSF/DFF y flujos SACD ISO, con una interfaz moderna, control de dispositivos de salida, visualización tipo VU meter, letras, carátulas y el asistente ZenithAI.
+Zenith Audio Player es un reproductor de música para Windows orientado a bibliotecas locales de alta resolución. Está diseñado para reproducir FLAC, WAV, AIFF, APE, WavPack, Opus, MP3, AAC/M4A, DSF/DFF, hojas CUE y flujos SACD ISO, con una interfaz moderna, control de dispositivos de salida, visualización tipo VU meter, letras, carátulas y el asistente ZenithAI.
+
+La versión 1.0.6 agrega un fallback WAV PCM propio con NAudio para casos donde Windows avanza la pista pero no entrega audio, fallback DSF/DFF sin compresión DST a PCM en RAM cuando no hay DAC DSD ni backend nativo, y soporte de biblioteca para APE, WavPack, Opus y hojas CUE.
 
 El objetivo principal es ofrecer una experiencia de escucha clara, técnica y fácil de usar, especialmente para usuarios que tienen bibliotecas grandes, archivos DSD o equipos de audio dedicados.
 
@@ -35,7 +37,7 @@ El instalador oficial incluye .NET Desktop Runtime 8 y Windows App Runtime 1.8, 
 ## 3. Instalación
 
 1. Descarga el instalador desde la sección Releases del repositorio de GitHub.
-2. Ejecuta `ZenithAudio_vX.X.X_Setup_win-x64.exe`.
+2. Ejecuta `ZenithAudio_v1.0.6_Setup_win-x64_wavfix.exe` o una versión superior.
 3. Acepta los permisos de administrador si Windows los solicita.
 4. Espera a que el instalador agregue los componentes necesarios.
 5. Abre Zenith Audio desde el acceso directo del escritorio o desde el menú Inicio.
@@ -74,14 +76,18 @@ Para bibliotecas grandes, es recomendable usar un SSD y evitar escanear discos e
 | Formato | Extensiones | Estado |
 | --- | --- | --- |
 | FLAC | `.flac` | Soportado |
-| WAV / PCM | `.wav` | Soportado |
+| WAV / PCM | `.wav` | Soportado; en 1.0.6 usa fallback PCM propio con NAudio si Media Foundation no entrega audio |
+| APE / Monkey's Audio | `.ape` | Soportado con BASS y `bass_ape.dll` |
+| WavPack | `.wv` | Soportado con BASS y `bass_wv.dll`; los `.wvc` deben estar junto al `.wv` |
 | AIFF | `.aiff`, `.aif` | Soportado |
 | ALAC / Apple Lossless | `.alac`, `.m4a` | Soportado según codecs disponibles |
 | MP3 | `.mp3` | Soportado |
 | AAC / MP4 Audio | `.aac`, `.m4a` | Soportado según codecs disponibles |
+| Ogg Opus | `.opus`, `.ogg` | Soportado según Windows Media Foundation o BASS con `bassopus.dll` |
 | DSD DSF | `.dsf` | Soportado con conversión DSD a PCM si no hay DAC DSD |
-| DSD DFF | `.dff` | Soportado parcialmente según backend disponible |
+| DSD DFF | `.dff` | Soportado con MPV o BASS + `bassdsd.dll`; fallback PCM para DFF/DSDIFF sin compresión DST |
 | SACD ISO | `.iso` | Soportado mediante extracción a DSF con `sacd_extract.exe` |
+| Hojas CUE | `.cue` | Soportado como índice virtual de pistas cuando referencia audio local |
 | MQA | `.mqa`, `.flac` con MQA | Reproducible como PCM; decodificación completa depende del DAC/backend |
 | Letras sincronizadas | `.lrc` | Soportado |
 | Letras simples | `.txt` | Soportado |
@@ -110,6 +116,31 @@ Zenith Audio intenta:
 4. Convertir temporalmente a PCM cuando sea necesario.
 
 Para SACD ISO, el proyecto usa `sacd_extract.exe` como herramienta externa. Por licencia y distribución, este binario puede no venir dentro del repositorio fuente, pero el instalador oficial puede incluir lo necesario según la release publicada.
+
+En la versión 1.0.6, DSF y DFF/DSDIFF sin compresión DST pueden reproducirse por fallback PCM en RAM. Si el archivo DFF usa compresión DST, se necesita MPV o BASS con `bassdsd.dll`.
+
+## 9.1 WAV y fallback PCM de la versión 1.0.6
+
+Algunos archivos WAV Hi-Res, float o multicanal pueden avanzar en la barra de reproducción sin emitir sonido cuando Windows Media Foundation no negocia correctamente la salida. Desde la versión 1.0.6, Zenith usa un stream PCM propio con NAudio para WAV cuando no están disponibles BASS o MPV.
+
+Este fallback:
+
+- Lee el WAV directamente.
+- Entrega PCM 16-bit al reproductor interno.
+- Hace downmix básico a estéreo cuando el WAV tiene más de dos canales.
+- Mantiene el VU meter con nivel real del stream.
+
+Si usas un DAC o interfaz profesional y quieres salida nativa multicanal o bit-perfect estricta, instala un backend opcional como MPV o BASS.
+
+## 9.2 Hojas CUE
+
+Zenith puede abrir hojas `.cue` y crear pistas virtuales cuando el CUE referencia un archivo local compatible, por ejemplo un único `.flac`, `.wav`, `.ape` o `.wv` con varias pistas indexadas.
+
+Para que funcione correctamente:
+
+- Mantén el `.cue` en la misma carpeta que el archivo de audio referenciado.
+- Conserva los nombres originales de archivo.
+- Haz doble clic en una pista virtual para reproducir desde su índice.
 
 ## 10. Carátulas
 
@@ -354,6 +385,16 @@ Revisa:
 - Que el dispositivo de salida esté seleccionado.
 - Que el modo de reproducción DSD esté en automático o conversión a PCM.
 - Que el volumen del sistema y de la app estén activos.
+
+En 1.0.6, DSF y DFF/DSDIFF sin DST pueden bajar a PCM en RAM. Si el DFF usa DST, instala MPV o BASS con `bassdsd.dll`.
+
+### El WAV avanza pero no suena
+
+Instala la versión 1.0.6 o superior. Esa versión agrega fallback WAV PCM con NAudio para evitar depender de Media Foundation en WAV problemáticos.
+
+### BASS o MPV aparecen como opcionales
+
+BASS y MPV son backends opcionales. Si no están instalados, Zenith usa rutas de fallback de Windows/NAudio cuando el formato lo permite. Para DSD nativo, APE, WavPack avanzado u Opus por BASS, coloca las DLL correspondientes en `src/ZenithAudio/runtimes/win-x64/native/` durante desarrollo o junto a la app instalada.
 
 ### SACD ISO no se abre
 

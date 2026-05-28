@@ -4,15 +4,20 @@ Zenith Audio Player es un reproductor de música para Windows creado con C#, Win
 
 <img width="1914" height="1025" alt="image" src="https://github.com/user-attachments/assets/a1a53a4f-4c47-4f00-b304-5a64c6cf8455" />
 
+**Versión actual:** `1.0.6`  
+**Instalador recomendado:** [`ZenithAudio_v1.0.6_Setup_win-x64_wavfix.exe`](https://github.com/xn1llox/Zenith-Audio-Player/releases/download/v1.0.6/ZenithAudio_v1.0.6_Setup_win-x64_wavfix.exe)
+
+La versión `1.0.6` agrega fallback WAV PCM con NAudio cuando no están disponibles BASS/MPV, fallback DSF/DFF sin compresión DST a PCM en RAM, soporte de biblioteca para APE, WavPack, Opus y hojas CUE, y mejoras en los mensajes de backends opcionales.
 
 ## Características
 
 - Interfaz moderna con WinUI 3 para Windows 10 y Windows 11.
 - Dashboard audiófilo con pestañas de Escucha, Laboratorio Anti-Fake y Letras.
 - Cadena de señal con LED de estado bit-perfect y flujo Archivo > Decoder > DSP > Salida.
-- Escaneo de biblioteca local para FLAC, WAV, MP3, M4A, DSF/DFF y flujos SACD ISO.
+- Escaneo de biblioteca local para FLAC, WAV, APE, WavPack, Opus, MP3, M4A, DSF/DFF, CUE y flujos SACD ISO.
 - Selector de dispositivo de salida usando los dispositivos detectados por Windows.
 - Conversión DSD a PCM cuando el equipo no tiene DAC o soporte DSD nativo.
+- Fallback WAV PCM propio con NAudio para WAV que avanzan pero no suenan por Media Foundation.
 - Controles de reproducción con barra de avance, volumen, aleatorio y cola.
 - Panel de carátula y letras cuando la metadata está disponible.
 - VU meter digital azul y visualizador de audio de fondo.
@@ -76,7 +81,7 @@ Notas:
 
 El instalador oficial se publica en GitHub Releases como archivo `.exe` para Windows x64.
 
-Desde la versión `1.0.4`, el instalador:
+Desde la versión `1.0.6`, el instalador:
 
 - Detecta si Zenith Audio ya está instalado en el sistema.
 - Muestra la versión instalada y la versión del instalador antes de continuar.
@@ -84,6 +89,7 @@ Desde la versión `1.0.4`, el instalador:
 - Elimina archivos antiguos del directorio instalado antes de copiar los nuevos.
 - Mantiene la configuración local del usuario guardada fuera del directorio de instalación.
 - Instala o repara .NET Desktop Runtime 8 y Windows App Runtime 1.8 cuando corresponde.
+- Se publica como `ZenithAudio_v1.0.6_Setup_win-x64_wavfix.exe` para distinguirlo de instaladores `1.0.6` anteriores.
 
 La configuración local, cachés temporales y datos generados por el usuario se guardan en las rutas de usuario de Windows, no dentro de `Program Files`. El proceso de actualización limpia solamente el directorio de instalación de la app.
 
