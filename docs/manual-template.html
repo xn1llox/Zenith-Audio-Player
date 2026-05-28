@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="$if(lang)$$lang$$else$es$endif$">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$pagetitle$</title>
+  $for(css)$
+  <link rel="stylesheet" href="$css$">
+  $endfor$
+</head>
+<body>
+  <header class="page-header">
+    <span class="page-header__brand">
+      <img src="$logo$" alt="Zenith Audio">
+      <span>Zenith Audio Player</span>
+    </span>
+    <span class="page-header__version">Manual v$version$</span>
+  </header>
+
+  <section class="cover">
+    <div class="cover__top">
+      <img class="cover__logo" src="$logo$" alt="Zenith Audio">
+      <div>
+        <p class="cover__kicker">Manual de usuario</p>
+        <h1>Zenith Audio Player</h1>
+        <p class="cover__subtitle">$subtitle$</p>
+      </div>
+    </div>
+    <div class="cover__meta">
+      <div><strong>Versión</strong>$version$</div>
+      <div><strong>Sistema</strong>Windows 10/11 x64</div>
+      <div><strong>Formato</strong>Guía PDF</div>
+    </div>
+  </section>
+
+  <main class="document">
+    $if(toc)$
+    <nav id="$idprefix$TOC" role="doc-toc">
+      <h2>Contenido</h2>
+      $table-of-contents$
+    </nav>
+    $endif$
+
+    $body$
+  </main>
+</body>
+</html>

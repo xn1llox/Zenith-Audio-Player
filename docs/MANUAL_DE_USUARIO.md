@@ -159,11 +159,11 @@ Zenith Audio puede mostrar:
 - Archivos `.lrc` sincronizados con tiempo.
 - Archivos `.txt` simples.
 
-Para que una letra externa se detecte automáticamente, usa el mismo nombre base de la canción:
+Para que una letra externa se detecte automáticamente, usa el mismo nombre base exacto de la canción. Solo debe cambiar la extensión:
 
 ```text
-01 Cancion.flac
-01 Cancion.lrc
+01 Canción.flac
+01 Canción.lrc
 ```
 
 También se aceptan archivos genéricos como `lyrics.lrc` o `lyrics.txt` dentro de la carpeta del álbum.

@@ -143,7 +143,7 @@ ZenithAI guarda la configuración de API de forma local y puede configurarse des
 ## Manual de Usuario
 
 - [Manual de usuario en Markdown](docs/MANUAL_DE_USUARIO.md)
-- [Manual de usuario en PDF](docs/ZenithAudio_Manual_de_Usuario.pdf)
+- [Manual de usuario en PDF](docs/ZenithAudio_Manual_de_Usuario.pdf), generado con Pandoc, portada con logo de Zenith y numeración de páginas.
 
 ## Donaciones
 
