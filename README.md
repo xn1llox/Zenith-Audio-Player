@@ -48,13 +48,17 @@ El instalador publicado incluye .NET Desktop Runtime 8 y Windows App Runtime 1.8
 | --- | --- | --- |
 | FLAC | `.flac` | Soportado |
 | WAV / PCM | `.wav` | Soportado |
+| APE / Monkey's Audio | `.ape` | Soportado con BASS y `bass_ape.dll` |
+| WavPack | `.wv` | Soportado con BASS y `bass_wv.dll`; archivos `.wvc` de correccion deben quedar junto al `.wv` |
 | AIFF | `.aiff`, `.aif` | Soportado |
 | ALAC / Apple Lossless | `.alac`, `.m4a` | Soportado según codecs disponibles |
 | MP3 | `.mp3` | Soportado |
 | AAC / MP4 audio | `.aac`, `.m4a` | Soportado según codecs disponibles |
+| Ogg Opus | `.opus`, `.ogg` | Soportado según Windows Media Foundation o BASS con `bassopus.dll` |
 | DSD DSF | `.dsf` | Soportado con conversión DSD a PCM si no hay DAC DSD |
-| DSD DFF | `.dff` | Soportado parcialmente según backend disponible |
+| DSD DFF | `.dff` | Soportado con MPV o BASS + `bassdsd.dll`; fallback PCM para DFF/DSDIFF sin compresión DST |
 | SACD ISO | `.iso` | Soportado mediante extracción a DSF con `sacd_extract.exe` |
+| Hojas CUE | `.cue` | Soportado como índice virtual de pistas cuando referencia audio local |
 | MQA | `.mqa`, `.flac` con MQA | Detectable/reproducible como PCM; decodificación MQA completa depende del DAC/backend |
 | Letras sincronizadas | `.lrc` | Soportado |
 | Letras simples | `.txt` | Soportado |
@@ -65,6 +69,7 @@ Notas:
 - En equipos sin DAC DSD, Zenith Audio puede convertir DSD temporalmente a PCM para reproducir por Windows/Realtek/USB.
 - Los formatos disponibles pueden variar según el backend activo y los codecs del sistema.
 - MPV y BASS son backends experimentales/opcionales y sus binarios nativos no se distribuyen dentro del repositorio.
+- FLAC/WAV multicanal pueden abrirse; en modo compartido Windows puede mezclar o bajar a estéreo según el dispositivo. En modo exclusivo, el DAC/interfaz debe aceptar el mapa de canales solicitado.
 
 ## Instalador y Actualizaciones
 
@@ -122,7 +127,7 @@ Archivos opcionales soportados:
 
 - `sacd_extract.exe` para extraer SACD ISO a DSF.
 - `mpv-2.dll` para pruebas con backend MPV.
-- `bass.dll`, `basswasapi.dll` y `bassdsd.dll` para pruebas con backend BASS.
+- `bass.dll`, `basswasapi.dll`, `bassdsd.dll`, `bass_ape.dll`, `bass_wv.dll` y `bassopus.dll` para pruebas con backend BASS.
 
 ## ZenithAI
 

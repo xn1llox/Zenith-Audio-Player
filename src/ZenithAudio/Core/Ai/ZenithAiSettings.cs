@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -41,7 +43,7 @@ public sealed record ZenithAiSettings(
                 var saved = JsonSerializer.Deserialize<ZenithAiSettings>(File.ReadAllText(UserSettingsPath), JsonOptions);
                 if (saved is not null)
                 {
-                    settings = Merge(settings, saved);
+                    settings = Merge(settings, saved with { ApiKey = UnprotectApiKey(saved.ApiKey) });
                 }
             }
             catch (JsonException)
@@ -72,7 +74,8 @@ public sealed record ZenithAiSettings(
     public static void Save(ZenithAiSettings settings)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(UserSettingsPath)!);
-        File.WriteAllText(UserSettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+        var persisted = settings with { ApiKey = ProtectApiKey(settings.ApiKey) };
+        File.WriteAllText(UserSettingsPath, JsonSerializer.Serialize(persisted, JsonOptions));
     }
 
     private static ZenithAiSettings Merge(ZenithAiSettings baseSettings, ZenithAiSettings overrideSettings)
@@ -130,6 +133,41 @@ public sealed record ZenithAiSettings(
             urlMatch.Success ? urlMatch.Groups[1].Value.Trim() : DefaultEndpoint,
             modelMatch.Success ? modelMatch.Groups[1].Value.Trim() : DefaultModel,
             apiKey);
+    }
+
+    private static string ProtectApiKey(string apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey) || apiKey.StartsWith("dpapi:", StringComparison.Ordinal))
+        {
+            return apiKey;
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(apiKey);
+        var protectedBytes = ProtectedData.Protect(bytes, optionalEntropy: null, DataProtectionScope.CurrentUser);
+        return "dpapi:" + Convert.ToBase64String(protectedBytes);
+    }
+
+    private static string UnprotectApiKey(string apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey) || !apiKey.StartsWith("dpapi:", StringComparison.Ordinal))
+        {
+            return apiKey;
+        }
+
+        try
+        {
+            var protectedBytes = Convert.FromBase64String(apiKey["dpapi:".Length..]);
+            var bytes = ProtectedData.Unprotect(protectedBytes, optionalEntropy: null, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(bytes);
+        }
+        catch (CryptographicException)
+        {
+            return string.Empty;
+        }
+        catch (FormatException)
+        {
+            return string.Empty;
+        }
     }
 
     private static string? FindProjectFile(string fileName)

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Globalization;
 
 namespace ZenithAudio.Core.Audio;
 
@@ -104,6 +105,18 @@ public sealed class AudioEngine : IDisposable
         RaiseState(PlaybackState.Playing);
     }
 
+    public void Seek(TimeSpan position)
+    {
+        if (_options.Backend == AudioBackend.MpvWasapi)
+        {
+            _mpvSession?.Seek(position);
+        }
+        else
+        {
+            _bassSession?.Seek(position);
+        }
+    }
+
     public void Stop()
     {
         _bassSession?.Dispose();
@@ -133,21 +146,24 @@ public sealed class AudioEngine : IDisposable
 
     private static IntPtr ResolveNativeLibrary(string libraryName, System.Reflection.Assembly assembly, DllImportSearchPath? searchPath)
     {
+        var path = FindNativeLibraryPath(libraryName);
+        if (path is not null && NativeLibrary.TryLoad(path, out var handle))
+        {
+            return handle;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private static string? FindNativeLibraryPath(string libraryName)
+    {
         var candidates = new[]
         {
             Path.Combine(AppContext.BaseDirectory, libraryName),
             Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "native", libraryName)
         };
 
-        foreach (var candidate in candidates)
-        {
-            if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
-            {
-                return handle;
-            }
-        }
-
-        return IntPtr.Zero;
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     private sealed class BassWasapiSession : IDisposable
@@ -184,7 +200,10 @@ public sealed class AudioEngine : IDisposable
                 ThrowBass("BASS_Init failed");
             }
 
-            BassNative.BASS_PluginLoad("bassdsd.dll", 0);
+            LoadBassPlugin("bassdsd.dll");
+            LoadBassPlugin("bass_ape.dll");
+            LoadBassPlugin("bass_wv.dll");
+            LoadBassPlugin("bassopus.dll");
             _bassReady = true;
         }
 
@@ -209,7 +228,8 @@ public sealed class AudioEngine : IDisposable
             var flags = _options.UseWasapiExclusive ? BassWasapiExclusive | BassWasapiEvent : BassWasapiEvent;
             var bufferSeconds = Math.Clamp(_options.BufferMilliseconds, 50, 500) / 1000f;
 
-            if (!BassWasapiNative.BASS_WASAPI_Init(_options.DeviceIndex, sampleRate, channels, flags, bufferSeconds, 0.0f, _wasapiProc, IntPtr.Zero))
+            var deviceIndex = ResolveWasapiDeviceIndex(_options);
+            if (!BassWasapiNative.BASS_WASAPI_Init(deviceIndex, sampleRate, channels, flags, bufferSeconds, 0.0f, _wasapiProc, IntPtr.Zero))
             {
                 ThrowWasapi("BASS_WASAPI_Init failed. The output device may not support this sample rate in exclusive mode");
             }
@@ -263,6 +283,20 @@ public sealed class AudioEngine : IDisposable
             }
         }
 
+        public void Seek(TimeSpan position)
+        {
+            if (_stream == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var bytePosition = BassNative.BASS_ChannelSeconds2Bytes(_stream, Math.Max(position.TotalSeconds, 0));
+            if (bytePosition >= 0)
+            {
+                BassNative.BASS_ChannelSetPosition(_stream, (ulong)bytePosition, 0);
+            }
+        }
+
         private IntPtr CreateDecodeStream(string filePath)
         {
             var flags = BassStreamDecode | BassSampleFloat | BassUnicode;
@@ -286,6 +320,58 @@ public sealed class AudioEngine : IDisposable
             }
 
             return BassNative.BASS_StreamCreateFile(false, filePath, 0, 0, flags);
+        }
+
+        private static void LoadBassPlugin(string fileName)
+        {
+            var pluginPath = FindNativeLibraryPath(fileName) ?? fileName;
+            BassNative.BASS_PluginLoad(pluginPath, 0);
+        }
+
+        private static int ResolveWasapiDeviceIndex(AudioEngineOptions options)
+        {
+            if (options.DeviceIndex >= 0)
+            {
+                return options.DeviceIndex;
+            }
+
+            if (string.IsNullOrWhiteSpace(options.DeviceName) && string.IsNullOrWhiteSpace(options.DeviceId))
+            {
+                return -1;
+            }
+
+            for (var index = 0; index < 128; index++)
+            {
+                var info = BassWasapiDeviceInfo.Empty;
+                if (!BassWasapiNative.BASS_WASAPI_GetDeviceInfo(index, ref info))
+                {
+                    continue;
+                }
+
+                var name = Marshal.PtrToStringAnsi(info.Name) ?? string.Empty;
+                var id = Marshal.PtrToStringAnsi(info.Id) ?? string.Empty;
+                var isInput = (info.Flags & BassWasapiDeviceInfo.Input) != 0;
+                var isLoopback = (info.Flags & BassWasapiDeviceInfo.Loopback) != 0;
+                var isEnabled = (info.Flags & BassWasapiDeviceInfo.Enabled) != 0;
+                if (isInput || isLoopback || !isEnabled)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(options.DeviceId) &&
+                    id.Contains(options.DeviceId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return index;
+                }
+
+                if (!string.IsNullOrWhiteSpace(options.DeviceName) &&
+                    name.Contains(options.DeviceName, StringComparison.CurrentCultureIgnoreCase))
+                {
+                    return index;
+                }
+            }
+
+            return -1;
         }
 
         private int WasapiCallback(IntPtr buffer, int length, IntPtr user)
@@ -388,6 +474,21 @@ public sealed class AudioEngine : IDisposable
             SetPause(false);
         }
 
+        public void Seek(TimeSpan position)
+        {
+            if (_handle == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var seconds = Math.Max(position.TotalSeconds, 0).ToString("0.###", CultureInfo.InvariantCulture);
+            var result = MpvNative.mpv_command_string(_handle, $"seek {seconds} absolute exact");
+            if (result < 0)
+            {
+                throw new InvalidOperationException($"MPV seek failed: {MpvNative.GetError(result)}");
+            }
+        }
+
         private void SetOption(string name, string value)
         {
             var result = MpvNative.mpv_set_option_string(_handle, name, value);
@@ -424,6 +525,9 @@ public sealed class AudioEngine : IDisposable
                 ".flac" => new AudioSignalInfo(0, 24, 0, 0, false, "FLAC"),
                 ".wav" => new AudioSignalInfo(0, 24, 0, 0, false, "PCM"),
                 ".aiff" or ".aif" => new AudioSignalInfo(0, 24, 0, 0, false, "AIFF"),
+                ".ape" => new AudioSignalInfo(0, 16, 0, 0, false, "Monkey's Audio"),
+                ".wv" => new AudioSignalInfo(0, 24, 0, 0, false, "WavPack"),
+                ".opus" => new AudioSignalInfo(0, 0, 0, 0, false, "Opus"),
                 _ => new AudioSignalInfo(0, 0, 0, 0, false, extension.TrimStart('.').ToUpperInvariant())
             };
         }
@@ -445,6 +549,25 @@ public sealed class AudioEngine : IDisposable
         public IntPtr FileName;
 
         public static BassChannelInfo Empty => new();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BassWasapiDeviceInfo
+    {
+        public const uint Enabled = 1;
+        public const uint Loopback = 2;
+        public const uint Input = 4;
+
+        public IntPtr Name;
+        public IntPtr Id;
+        public uint Type;
+        public uint Flags;
+        public float MinPeriod;
+        public float DefaultPeriod;
+        public int MixFrequency;
+        public int MixChannels;
+
+        public static BassWasapiDeviceInfo Empty => new();
     }
 
     private static class BassNative
@@ -481,6 +604,13 @@ public sealed class AudioEngine : IDisposable
         [DllImport("bass.dll", CallingConvention = CallingConvention.StdCall)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool BASS_ChannelGetInfo(IntPtr handle, ref BassChannelInfo info);
+
+        [DllImport("bass.dll", CallingConvention = CallingConvention.StdCall)]
+        public static extern long BASS_ChannelSeconds2Bytes(IntPtr handle, double position);
+
+        [DllImport("bass.dll", CallingConvention = CallingConvention.StdCall)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool BASS_ChannelSetPosition(IntPtr handle, ulong position, uint mode);
     }
 
     private static class BassDsdNative
@@ -520,6 +650,10 @@ public sealed class AudioEngine : IDisposable
         [DllImport("basswasapi.dll", CallingConvention = CallingConvention.StdCall)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool BASS_WASAPI_Free();
+
+        [DllImport("basswasapi.dll", CallingConvention = CallingConvention.StdCall)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool BASS_WASAPI_GetDeviceInfo(int device, ref BassWasapiDeviceInfo info);
     }
 
     private static class MpvNative

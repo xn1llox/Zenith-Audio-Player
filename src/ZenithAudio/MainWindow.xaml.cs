@@ -30,9 +30,13 @@ public sealed partial class MainWindow : Window
         ".aif",
         ".alac",
         ".mqa",
+        ".ape",
+        ".wv",
         ".mp3",
         ".aac",
-        ".ogg"
+        ".ogg",
+        ".opus",
+        ".cue"
     };
 
     private static readonly HashSet<string> DsdExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -49,7 +53,9 @@ public sealed partial class MainWindow : Window
         ".aiff",
         ".aif",
         ".alac",
-        ".mqa"
+        ".mqa",
+        ".ape",
+        ".wv"
     };
 
     private static readonly HashSet<string> WindowsFallbackExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -60,7 +66,8 @@ public sealed partial class MainWindow : Window
         ".aif",
         ".mp3",
         ".aac",
-        ".ogg"
+        ".ogg",
+        ".opus"
     };
 
     private readonly AudioEngine _audioEngine = new();
@@ -72,6 +79,7 @@ public sealed partial class MainWindow : Window
     private readonly List<LibraryTrack> _libraryTracks = [];
     private readonly List<LibraryTrack> _visibleLibraryTracks = [];
     private readonly Dictionary<string, IsoAudioEntry> _isoEntries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CueAudioEntry> _cueEntries = new(StringComparer.OrdinalIgnoreCase);
     private string _activeLibraryTitle = "Explorador de biblioteca";
     private readonly List<OutputDeviceOption> _outputDevices = [];
     private List<SyncedLyricLine> _syncedLyrics = [];
@@ -95,6 +103,7 @@ public sealed partial class MainWindow : Window
     private bool _shuffleEnabled = true;
     private bool _isApplyingAdaptiveBuffer;
     private string _bufferProfile = "manual";
+    private CueAudioEntry? _pendingCueEntry;
 
     public MainWindow()
     {
@@ -127,6 +136,7 @@ public sealed partial class MainWindow : Window
         FallbackPlayerElement.SetMediaPlayer(_fallbackMediaPlayer);
         _fallbackMediaPlayer.MediaOpened += FallbackMediaPlayer_MediaOpened;
         _fallbackMediaPlayer.MediaEnded += FallbackMediaPlayer_MediaEnded;
+        _fallbackMediaPlayer.AudioCategory = MediaPlayerAudioCategory.Media;
         _fallbackMediaPlayer.Volume = 1.0;
         Closed += MainWindow_Closed;
         InitializeOutputDeviceList();
@@ -181,6 +191,12 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        if (extension.Equals(".cue", StringComparison.OrdinalIgnoreCase))
+        {
+            await OpenCueSheetAsync(filePath);
+            return;
+        }
+
         LoadTrack(filePath);
         await Task.Delay(80);
         PlayButton_Click(this, null!);
@@ -200,7 +216,14 @@ public sealed partial class MainWindow : Window
         picker.FileTypeFilter.Add(".aiff");
         picker.FileTypeFilter.Add(".alac");
         picker.FileTypeFilter.Add(".mqa");
+        picker.FileTypeFilter.Add(".ape");
+        picker.FileTypeFilter.Add(".wv");
+        picker.FileTypeFilter.Add(".opus");
+        picker.FileTypeFilter.Add(".mp3");
+        picker.FileTypeFilter.Add(".aac");
+        picker.FileTypeFilter.Add(".ogg");
         picker.FileTypeFilter.Add(".iso");
+        picker.FileTypeFilter.Add(".cue");
 
         InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
         var file = await picker.PickSingleFileAsync();
@@ -213,6 +236,12 @@ public sealed partial class MainWindow : Window
         if (Path.GetExtension(file.Path).Equals(".iso", StringComparison.OrdinalIgnoreCase))
         {
             await OpenIsoImageAsync(file.Path);
+            return;
+        }
+
+        if (Path.GetExtension(file.Path).Equals(".cue", StringComparison.OrdinalIgnoreCase))
+        {
+            await OpenCueSheetAsync(file.Path);
             return;
         }
 
@@ -263,14 +292,26 @@ public sealed partial class MainWindow : Window
                     ApplyWindowsMaximumQualityFallback(backend, "MPV seleccionado sin DAC exclusivo");
                 }
 
+                var selectedOutputDevice = GetSelectedOutputDevice();
+                var hasSpecificOutputDevice = selectedOutputDevice is not null && !selectedOutputDevice.IsSystemDefault;
+                var selectedDeviceName = hasSpecificOutputDevice ? selectedOutputDevice!.Name : null;
+                var selectedDeviceId = hasSpecificOutputDevice ? selectedOutputDevice!.Id : null;
+
                 await _audioEngine.InitializeAsync(new AudioEngineOptions
                 {
                     Backend = backend,
                     BufferMilliseconds = (int)BufferSlider.Value,
+                    DeviceName = selectedDeviceName,
+                    DeviceId = selectedDeviceId,
                     UseWasapiExclusive = ExclusiveModeToggle.IsOn && !mpvWithoutExclusiveDac
                 });
 
                 await _audioEngine.PlayAsync(playbackFilePath);
+                if (_pendingCueEntry is not null && _pendingCueEntry.Start > TimeSpan.Zero)
+                {
+                    _audioEngine.Seek(_pendingCueEntry.Start);
+                }
+
                 _usingFallbackPlayer = false;
                 _vuUsesLiveLevel = false;
                 PrepareVuAnalyzer(playbackFilePath);
@@ -1111,6 +1152,12 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            if (track.Extension.Equals(".cue", StringComparison.OrdinalIgnoreCase))
+            {
+                _ = OpenCueSheetAsync(track.Path);
+                return;
+            }
+
             LoadTrack(track.Path);
             return;
         }
@@ -1134,6 +1181,12 @@ public sealed partial class MainWindow : Window
         if (track.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
         {
             await OpenIsoImageAsync(track.Path);
+            return;
+        }
+
+        if (track.Extension.Equals(".cue", StringComparison.OrdinalIgnoreCase))
+        {
+            await OpenCueSheetAsync(track.Path);
             return;
         }
 
@@ -1171,9 +1224,17 @@ public sealed partial class MainWindow : Window
             var duration = sender.PlaybackSession.NaturalDuration;
             PlaybackProgressSlider.Maximum = Math.Max(duration.TotalSeconds, 1);
             DurationTextBlock.Text = FormatTime(duration);
-            CurrentTimeTextBlock.Text = "0:00";
+            if (_pendingCueEntry is not null && _pendingCueEntry.Start > TimeSpan.Zero)
+            {
+                sender.PlaybackSession.Position = _pendingCueEntry.Start;
+                CurrentTimeTextBlock.Text = FormatTime(_pendingCueEntry.Start);
+            }
+            else
+            {
+                CurrentTimeTextBlock.Text = "0:00";
+            }
             _currentLyricIndex = -1;
-            UpdateSyncedLyrics(TimeSpan.Zero);
+            UpdateSyncedLyrics(_pendingCueEntry?.Start ?? TimeSpan.Zero);
             _playbackTimer.Start();
         });
     }
@@ -1215,6 +1276,12 @@ public sealed partial class MainWindow : Window
         CurrentTimeTextBlock.Text = FormatTime(position);
         DurationTextBlock.Text = FormatTime(duration);
         UpdateSyncedLyrics(position);
+
+        if (_pendingCueEntry?.End is { } cueEnd && position >= cueEnd)
+        {
+            StopButton_Click(this, new RoutedEventArgs());
+            _ = PlayNextTrackAsync(manual: false);
+        }
     }
 
     private void SeekFallbackPlayer(TimeSpan position)
@@ -1265,7 +1332,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var currentExtension = Path.GetExtension(_currentFilePath);
+        var effectivePath = GetEffectivePlaybackPath(_currentFilePath);
+        var currentExtension = Path.GetExtension(effectivePath);
         var extension = currentExtension.TrimStart('.').ToUpperInvariant();
         var sourceRate = DsdExtensions.Contains(currentExtension)
             ? "Fuente DSD"
@@ -1284,7 +1352,7 @@ public sealed partial class MainWindow : Window
             {
                 decode = "Windows Media Foundation";
             }
-            else if (IsNativeBackendAvailable(backend, _currentFilePath))
+            else if (IsNativeBackendAvailable(backend, effectivePath))
             {
                 decode = backend == AudioBackend.MpvWasapi ? "MPV WASAPI" : "BASS WASAPI";
             }
@@ -2195,6 +2263,21 @@ public sealed partial class MainWindow : Window
         return AudioBackend.BassWasapi;
     }
 
+    private string GetEffectivePlaybackPath(string path)
+    {
+        if (_cueEntries.TryGetValue(path, out var cueEntry))
+        {
+            return cueEntry.AudioPath;
+        }
+
+        if (_isoEntries.TryGetValue(path, out var isoEntry))
+        {
+            return isoEntry.InternalPath;
+        }
+
+        return path;
+    }
+
     private async void AddLibraryFolder(string path)
     {
         if (_libraryFolders.Contains(path, StringComparer.OrdinalIgnoreCase))
@@ -2261,6 +2344,62 @@ public sealed partial class MainWindow : Window
 
             return tracks;
         });
+    }
+
+    private async Task OpenCueSheetAsync(string cuePath)
+    {
+        TrackTitleTextBlock.Text = Path.GetFileName(cuePath);
+        TrackPathTextBlock.Text = cuePath;
+        CodecTextBlock.Text = "CUE";
+        TransportBadgeTextBlock.Text = "CUE";
+        PlayButton.IsEnabled = false;
+        PauseButton.IsEnabled = false;
+        StopButton.IsEnabled = false;
+        StatusInfoBar.Severity = InfoBarSeverity.Informational;
+        StatusInfoBar.Message = "Leyendo hoja CUE e indexando pistas virtuales...";
+
+        try
+        {
+            var entries = await Task.Run(() => CueSheetParser.ParseFile(cuePath));
+            if (entries.Count == 0)
+            {
+                StatusInfoBar.Severity = InfoBarSeverity.Warning;
+                StatusInfoBar.Message = "La hoja CUE no apunta a archivos de audio encontrados junto al .cue.";
+                return;
+            }
+
+            foreach (var key in _cueEntries
+                .Where(pair => pair.Value.CuePath.Equals(cuePath, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Key)
+                .ToList())
+            {
+                _cueEntries.Remove(key);
+            }
+
+            var tracks = new List<LibraryTrack>();
+            for (var index = 0; index < entries.Count; index++)
+            {
+                var entry = entries[index];
+                var virtualPath = $"cue://{cuePath}|{index}";
+                _cueEntries[virtualPath] = entry;
+                var performer = string.IsNullOrWhiteSpace(entry.Performer) ? string.Empty : $"{entry.Performer} - ";
+                tracks.Add(new LibraryTrack(
+                    $"{index + 1:00}. {performer}{entry.Title}",
+                    $"CUE {Path.GetExtension(entry.AudioPath).TrimStart('.').ToUpperInvariant()}",
+                    Path.GetExtension(entry.AudioPath),
+                    virtualPath,
+                    cuePath));
+            }
+
+            ShowTrackBrowser($"CUE: {Path.GetFileNameWithoutExtension(cuePath)}", tracks);
+            StatusInfoBar.Severity = InfoBarSeverity.Success;
+            StatusInfoBar.Message = $"CUE cargado: {tracks.Count} pistas virtuales.";
+        }
+        catch (Exception ex)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Error;
+            StatusInfoBar.Message = $"No se pudo leer el CUE: {ex.Message}";
+        }
     }
 
     private void ShowFolderBrowser()
@@ -2397,6 +2536,20 @@ public sealed partial class MainWindow : Window
 
     private async Task<string?> ResolvePlayablePathAsync(string path)
     {
+        _pendingCueEntry = null;
+        if (_cueEntries.TryGetValue(path, out var cueEntry))
+        {
+            if (!File.Exists(cueEntry.AudioPath))
+            {
+                StatusInfoBar.Severity = InfoBarSeverity.Warning;
+                StatusInfoBar.Message = $"El audio referenciado por el CUE no existe: {cueEntry.AudioPath}";
+                return null;
+            }
+
+            _pendingCueEntry = cueEntry;
+            return cueEntry.AudioPath;
+        }
+
         if (!_isoEntries.TryGetValue(path, out var entry))
         {
             return path;
@@ -2435,6 +2588,18 @@ public sealed partial class MainWindow : Window
     private void LoadTrack(string filePath)
     {
         _currentFilePath = filePath;
+        if (_cueEntries.TryGetValue(filePath, out var cueEntry))
+        {
+            TrackTitleTextBlock.Text = cueEntry.Title;
+            TrackPathTextBlock.Text = $"{Path.GetFileName(cueEntry.CuePath)} > {Path.GetFileName(cueEntry.AudioPath)} @ {FormatTime(cueEntry.Start)}";
+            CodecTextBlock.Text = $"CUE {Path.GetExtension(cueEntry.AudioPath).TrimStart('.').ToUpperInvariant()}";
+            TransportBadgeTextBlock.Text = "CARGADO";
+            UpdateNowPlayingVisuals(cueEntry.AudioPath);
+            UpdatePlaybackAvailabilityV2();
+            UpdateSignalChain();
+            return;
+        }
+
         if (_isoEntries.TryGetValue(filePath, out var isoEntry))
         {
             TrackTitleTextBlock.Text = isoEntry.Title;
@@ -2508,7 +2673,7 @@ public sealed partial class MainWindow : Window
             .Where(track => WindowsFallbackExtensions.Contains(track.Extension) ||
                 track.Extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
                 track.Path.StartsWith("iso://", StringComparison.OrdinalIgnoreCase) ||
-                IsNativeBackendAvailable(GetSelectedBackend(), track.Path))
+                IsNativeBackendAvailable(GetSelectedBackend(), GetEffectivePlaybackPath(track.Path)))
             .ToList();
         if (playableTracks.Count == 0)
         {
@@ -2587,17 +2752,24 @@ public sealed partial class MainWindow : Window
         MediaSource? playbackSource = null;
         if (DsdExtensions.Contains(Path.GetExtension(filePath)))
         {
-            if (!Path.GetExtension(filePath).Equals(".dsf", StringComparison.OrdinalIgnoreCase))
+            var dsdExtension = Path.GetExtension(filePath);
+            if (dsdExtension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException("DFF/ISO necesitan MPV o BASS. DSF puede bajar automaticamente a PCM por Windows.");
+                throw new InvalidOperationException("SACD ISO requiere extraccion previa a DSF. Abre el ISO desde la biblioteca para extraer pistas temporales.");
             }
 
             StatusInfoBar.Severity = InfoBarSeverity.Warning;
-            StatusInfoBar.Message = "DSD nativo no disponible. Streaming DSF -> PCM en RAM para Realtek/Windows, sin cache en disco.";
+            StatusInfoBar.Message = "DSD nativo no disponible. Streaming DSD -> PCM en RAM para Realtek/Windows, sin cache en disco.";
             TransportBadgeTextBlock.Text = "DSD -> PCM";
             _vuUsesLiveLevel = true;
             _vuUsesAnalyzer = false;
             playbackSource = DsfPcmStreamSource.CreateMediaSource(filePath, _toneSettings, level => _vuTargetLevel = MapLiveVuLevel(level));
+        }
+        else if (Path.GetExtension(filePath).Equals(".wav", StringComparison.OrdinalIgnoreCase))
+        {
+            _vuUsesLiveLevel = true;
+            _vuUsesAnalyzer = false;
+            playbackSource = WavPcmStreamSource.CreateMediaSource(filePath, level => _vuTargetLevel = MapLiveVuLevel(level));
         }
         else
         {
@@ -2628,12 +2800,14 @@ public sealed partial class MainWindow : Window
             BitDepthTextBlock.Text = "16 bit";
             ChannelsTextBlock.Text = "2";
             BitrateTextBlock.Text = "-- kbps";
-            CodecTextBlock.Text = "DSF -> PCM";
+            CodecTextBlock.Text = $"{Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant()} -> PCM";
             UpdateSignalChain("Decodificación DSF en stream");
         }
         else
         {
-            UpdateSignalChain("Windows Media Foundation");
+            UpdateSignalChain(Path.GetExtension(filePath).Equals(".wav", StringComparison.OrdinalIgnoreCase)
+                ? "WAV PCM stream"
+                : "Windows Media Foundation");
         }
 
         WritePlaybackAuditLog(filePath, "Windows fallback");
@@ -2713,7 +2887,28 @@ public sealed partial class MainWindow : Window
             return false;
         }
 
-        return !DsdExtensions.Contains(Path.GetExtension(filePath)) || IsDllAvailable("bassdsd.dll");
+        var extension = Path.GetExtension(filePath);
+        if (DsdExtensions.Contains(extension))
+        {
+            return IsDllAvailable("bassdsd.dll");
+        }
+
+        if (extension.Equals(".ape", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsDllAvailable("bass_ape.dll");
+        }
+
+        if (extension.Equals(".wv", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsDllAvailable("bass_wv.dll");
+        }
+
+        if (extension.Equals(".opus", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsDllAvailable("bassopus.dll") || WindowsFallbackExtensions.Contains(extension);
+        }
+
+        return true;
     }
 
     private static bool IsDllAvailable(string fileName)
@@ -2827,9 +3022,10 @@ public sealed partial class MainWindow : Window
 
         var backend = GetSelectedBackend();
         var hasTrack = !string.IsNullOrWhiteSpace(_currentFilePath);
-        var extension = hasTrack ? Path.GetExtension(_currentFilePath!) : string.Empty;
+        var effectivePath = hasTrack ? GetEffectivePlaybackPath(_currentFilePath!) : string.Empty;
+        var extension = hasTrack ? Path.GetExtension(effectivePath) : string.Empty;
         var isDsd = DsdExtensions.Contains(extension);
-        var nativeAvailable = hasTrack && IsNativeBackendAvailable(backend, _currentFilePath!);
+        var nativeAvailable = hasTrack && IsNativeBackendAvailable(backend, effectivePath);
 
         BackendTextBlock.Text = backend == AudioBackend.BassWasapi ? "BASS" : "MPV";
 
@@ -2865,14 +3061,15 @@ public sealed partial class MainWindow : Window
 
         if (isDsd)
         {
-            var canConvertDsf = extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase);
-            PlayButton.IsEnabled = canConvertDsf;
+            var canConvertDsd = extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
+                extension.Equals(".dff", StringComparison.OrdinalIgnoreCase);
+            PlayButton.IsEnabled = canConvertDsd;
             PreferredFormatComboBox.SelectedIndex = 2;
             ExclusiveModeToggle.IsOn = false;
-            ModeTextBlock.Text = canConvertDsf ? "DSD a PCM" : "DSD nativo";
-            OutputPathTextBlock.Text = canConvertDsf ? "PCM Realtek/Windows" : "DLL nativas faltantes";
+            ModeTextBlock.Text = canConvertDsd ? "DSD a PCM" : "DSD nativo";
+            OutputPathTextBlock.Text = canConvertDsd ? "PCM Realtek/Windows" : "DLL nativas faltantes";
             StatusInfoBar.Severity = InfoBarSeverity.Warning;
-            StatusInfoBar.Message = canConvertDsf
+            StatusInfoBar.Message = canConvertDsd
                 ? "No hay DAC/librerías nativas. Zenith convertirá DSF a PCM 88.2 kHz y reproducirá por Windows/Realtek."
                 : GetNativeDsdMissingMessage(backend);
             return;
@@ -2900,9 +3097,10 @@ public sealed partial class MainWindow : Window
 
         var backend = GetSelectedBackend();
         var hasTrack = !string.IsNullOrWhiteSpace(_currentFilePath);
-        var extension = hasTrack ? Path.GetExtension(_currentFilePath!) : string.Empty;
+        var effectivePath = hasTrack ? GetEffectivePlaybackPath(_currentFilePath!) : string.Empty;
+        var extension = hasTrack ? Path.GetExtension(effectivePath) : string.Empty;
         var isDsd = DsdExtensions.Contains(extension);
-        var nativeAvailable = hasTrack && IsNativeBackendAvailable(backend, _currentFilePath!);
+        var nativeAvailable = hasTrack && IsNativeBackendAvailable(backend, effectivePath);
 
         BackendTextBlock.Text = backend == AudioBackend.BassWasapi ? "BASS" : "MPV";
 
@@ -2938,14 +3136,15 @@ public sealed partial class MainWindow : Window
 
         if (isDsd)
         {
-            var canConvertDsf = extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase);
-            PlayButton.IsEnabled = canConvertDsf;
+            var canConvertDsd = extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
+                extension.Equals(".dff", StringComparison.OrdinalIgnoreCase);
+            PlayButton.IsEnabled = canConvertDsd;
             PreferredFormatComboBox.SelectedIndex = 2;
             ExclusiveModeToggle.IsOn = false;
-            ModeTextBlock.Text = canConvertDsf ? "DSD a PCM" : "DSD nativo";
-            OutputPathTextBlock.Text = canConvertDsf ? "PCM Realtek/Windows" : "DLL nativas faltantes";
+            ModeTextBlock.Text = canConvertDsd ? "DSD a PCM" : "DSD nativo";
+            OutputPathTextBlock.Text = canConvertDsd ? "PCM Realtek/Windows" : "DLL nativas faltantes";
             StatusInfoBar.Severity = InfoBarSeverity.Warning;
-            StatusInfoBar.Message = canConvertDsf
+            StatusInfoBar.Message = canConvertDsd
                 ? "No hay DAC/librerías nativas. Zenith convertirá DSF a PCM 88.2 kHz y reproducirá por Windows/Realtek."
                 : GetNativeDsdMissingMessage(backend);
             return;
@@ -2973,14 +3172,14 @@ public sealed partial class MainWindow : Window
         {
             bassItem.Content = IsDllAvailable("bass.dll") && IsDllAvailable("basswasapi.dll")
                 ? "BASS WASAPI"
-                : "BASS WASAPI (faltan DLLs)";
+                : "BASS WASAPI (opcional)";
         }
 
         if (BackendComboBox.Items[1] is ComboBoxItem mpvItem)
         {
             mpvItem.Content = IsDllAvailable("mpv-2.dll")
                 ? "MPV WASAPI"
-                : "MPV WASAPI (falta mpv-2.dll)";
+                : "MPV WASAPI (opcional)";
         }
     }
 

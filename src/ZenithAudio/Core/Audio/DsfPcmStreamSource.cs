@@ -87,15 +87,15 @@ public static class DsfPcmStreamSource
             _toneSettings = toneSettings;
             _levelSink = levelSink;
             _input = File.OpenRead(filePath);
-            _info = ReadDsfInfo(_input);
+            _info = ReadDsdInfo(_input);
             if (_info.Channels <= 0 || _info.Channels > 8)
             {
-                throw new InvalidOperationException("DSF fallback no pudo detectar canales validos.");
+                throw new InvalidOperationException("DSD fallback no pudo detectar canales validos.");
             }
 
             if (_info.SampleRate <= TargetSampleRate || _info.SampleRate % TargetSampleRate != 0)
             {
-                throw new InvalidOperationException("DSF fallback solo soporta DSD compatible con PCM 88.2 kHz.");
+                throw new InvalidOperationException("DSD fallback solo soporta DSD compatible con PCM 88.2 kHz.");
             }
 
             Channels = (uint)_info.Channels;
@@ -139,8 +139,9 @@ public static class DsfPcmStreamSource
                 var outputOffset = outputFrame * frameSize;
                 for (var channel = 0; channel < _info.Channels; channel++)
                 {
-                    var channelOffset = channel * _info.BlockSizePerChannel;
-                    var ones = CountOnes(_sourceBlock, channelOffset, bitStart, _ratio);
+                    var ones = _info.IsDff
+                        ? CountDffOnes(_sourceBlock, channel, _info.Channels, bitStart, _ratio)
+                        : CountDsfOnes(_sourceBlock, channel * _info.BlockSizePerChannel, bitStart, _ratio);
                     var centered = ((ones / (double)_ratio) * 2.0) - 1.0;
                     _channelStates[channel] = (_channelStates[channel] * 0.92) + (centered * 0.08);
                     var shaped = ApplyTone(channel, _channelStates[channel]);
@@ -253,7 +254,7 @@ public static class DsfPcmStreamSource
             return DbToLinear(db) - 1.0;
         }
 
-        private static int CountOnes(byte[] source, int channelOffset, int bitStart, int bitCount)
+        private static int CountDsfOnes(byte[] source, int channelOffset, int bitStart, int bitCount)
         {
             var ones = 0;
             for (var bit = bitStart; bit < bitStart + bitCount; bit++)
@@ -263,6 +264,38 @@ public static class DsfPcmStreamSource
             }
 
             return ones;
+        }
+
+        private static int CountDffOnes(byte[] source, int channel, int channels, int bitStart, int bitCount)
+        {
+            var ones = 0;
+            for (var bit = bitStart; bit < bitStart + bitCount; bit++)
+            {
+                var byteIndex = ((bit >> 3) * channels) + channel;
+                if ((uint)byteIndex >= (uint)source.Length)
+                {
+                    break;
+                }
+
+                var value = source[byteIndex];
+                ones += (value >> (7 - (bit & 7))) & 1;
+            }
+
+            return ones;
+        }
+
+        private static DsfInfo ReadDsdInfo(Stream stream)
+        {
+            Span<byte> id = stackalloc byte[4];
+            stream.ReadExactly(id);
+            stream.Position = 0;
+
+            return id switch
+            {
+                _ when id.SequenceEqual("DSD "u8) => ReadDsfInfo(stream),
+                _ when id.SequenceEqual("FRM8"u8) => ReadDffInfo(stream),
+                _ => throw new InvalidOperationException("El archivo DSD no tiene cabecera DSF o DFF valida.")
+            };
         }
 
         private static DsfInfo ReadDsfInfo(Stream stream)
@@ -300,13 +333,112 @@ public static class DsfPcmStreamSource
                 var chunk = ReadChunkHeader(stream);
                 if (chunk.Id == "data")
                 {
-                    return new DsfInfo(channels, sampleRate, sampleCount, blockSize, stream.Position, chunk.HeaderStart + checked((long)chunk.Size));
+                    return new DsfInfo(channels, sampleRate, sampleCount, blockSize, stream.Position, chunk.HeaderStart + checked((long)chunk.Size), IsDff: false);
                 }
 
                 stream.Position = chunk.HeaderStart + checked((long)chunk.Size);
             }
 
             throw new InvalidOperationException("El archivo DSF no contiene bloque de audio data.");
+        }
+
+        private static DsfInfo ReadDffInfo(Stream stream)
+        {
+            var form = ReadDffChunkHeader(stream);
+            if (form.Id != "FRM8")
+            {
+                throw new InvalidOperationException("El archivo DFF no contiene cabecera FRM8 valida.");
+            }
+
+            Span<byte> formTypeBuffer = stackalloc byte[4];
+            stream.ReadExactly(formTypeBuffer);
+            var formType = System.Text.Encoding.ASCII.GetString(formTypeBuffer);
+            if (formType != "DSD ")
+            {
+                throw new InvalidOperationException("El archivo DFF no es DSDIFF DSD sin comprimir.");
+            }
+
+            var formEnd = Math.Min(stream.Length, form.HeaderStart + checked((long)form.Size) + 12);
+            var channels = 0;
+            var sampleRate = 0;
+            var dataOffset = 0L;
+            var dataEnd = 0L;
+            var isCompressedDst = false;
+
+            while (stream.Position + 12 <= formEnd)
+            {
+                var chunk = ReadDffChunkHeader(stream);
+                var chunkDataStart = stream.Position;
+                var chunkEnd = Math.Min(stream.Length, chunk.HeaderStart + checked((long)chunk.Size) + 12);
+
+                if (chunk.Id == "PROP")
+                {
+                    ParseDffPropertyChunk(stream, chunkEnd, ref channels, ref sampleRate, ref isCompressedDst);
+                }
+                else if (chunk.Id == "DSD ")
+                {
+                    dataOffset = chunkDataStart;
+                    dataEnd = chunkEnd;
+                }
+
+                stream.Position = AlignEven(chunkEnd);
+            }
+
+            if (isCompressedDst)
+            {
+                throw new InvalidOperationException("El fallback DFF solo soporta DSD sin comprimir. Este archivo usa DST y requiere MPV o BASS.");
+            }
+
+            if (channels <= 0 || sampleRate <= 0 || dataOffset <= 0 || dataEnd <= dataOffset)
+            {
+                throw new InvalidOperationException("El archivo DFF no contiene metadatos DSD completos.");
+            }
+
+            var dataBytes = dataEnd - dataOffset;
+            var sampleCount = checked((ulong)((dataBytes / channels) * 8));
+            var blockSizePerChannel = 4096;
+            return new DsfInfo(channels, sampleRate, sampleCount, blockSizePerChannel, dataOffset, dataEnd, IsDff: true);
+        }
+
+        private static void ParseDffPropertyChunk(
+            Stream stream,
+            long propertyEnd,
+            ref int channels,
+            ref int sampleRate,
+            ref bool isCompressedDst)
+        {
+            Span<byte> propertyTypeBuffer = stackalloc byte[4];
+            stream.ReadExactly(propertyTypeBuffer);
+            var propertyType = System.Text.Encoding.ASCII.GetString(propertyTypeBuffer);
+            if (propertyType != "SND ")
+            {
+                return;
+            }
+
+            while (stream.Position + 12 <= propertyEnd)
+            {
+                var property = ReadDffChunkHeader(stream);
+                var propertyDataStart = stream.Position;
+                var propertyDataEnd = Math.Min(propertyEnd, property.HeaderStart + checked((long)property.Size) + 12);
+
+                switch (property.Id)
+                {
+                    case "FS  ":
+                        sampleRate = checked((int)ReadUInt32BigEndian(stream));
+                        break;
+                    case "CHNL":
+                        channels = ReadUInt16BigEndian(stream);
+                        break;
+                    case "CMPR":
+                        var compressionBuffer = new byte[4];
+                        stream.ReadExactly(compressionBuffer);
+                        var compression = System.Text.Encoding.ASCII.GetString(compressionBuffer);
+                        isCompressedDst = !compression.Equals("DSD ", StringComparison.Ordinal);
+                        break;
+                }
+
+                stream.Position = AlignEven(Math.Max(propertyDataStart, propertyDataEnd));
+            }
         }
 
         private static DsfChunk ReadChunkHeader(Stream stream)
@@ -318,11 +450,34 @@ public static class DsfPcmStreamSource
             return new DsfChunk(System.Text.Encoding.ASCII.GetString(id), size, headerStart);
         }
 
+        private static DsfChunk ReadDffChunkHeader(Stream stream)
+        {
+            var headerStart = stream.Position;
+            Span<byte> id = stackalloc byte[4];
+            stream.ReadExactly(id);
+            var size = ReadUInt64BigEndian(stream);
+            return new DsfChunk(System.Text.Encoding.ASCII.GetString(id), size, headerStart);
+        }
+
+        private static ushort ReadUInt16BigEndian(Stream stream)
+        {
+            Span<byte> buffer = stackalloc byte[2];
+            stream.ReadExactly(buffer);
+            return BinaryPrimitives.ReadUInt16BigEndian(buffer);
+        }
+
         private static uint ReadUInt32LittleEndian(Stream stream)
         {
             Span<byte> buffer = stackalloc byte[4];
             stream.ReadExactly(buffer);
             return BinaryPrimitives.ReadUInt32LittleEndian(buffer);
+        }
+
+        private static uint ReadUInt32BigEndian(Stream stream)
+        {
+            Span<byte> buffer = stackalloc byte[4];
+            stream.ReadExactly(buffer);
+            return BinaryPrimitives.ReadUInt32BigEndian(buffer);
         }
 
         private static ulong ReadUInt64LittleEndian(Stream stream)
@@ -331,9 +486,21 @@ public static class DsfPcmStreamSource
             stream.ReadExactly(buffer);
             return BinaryPrimitives.ReadUInt64LittleEndian(buffer);
         }
+
+        private static ulong ReadUInt64BigEndian(Stream stream)
+        {
+            Span<byte> buffer = stackalloc byte[8];
+            stream.ReadExactly(buffer);
+            return BinaryPrimitives.ReadUInt64BigEndian(buffer);
+        }
+
+        private static long AlignEven(long value)
+        {
+            return (value & 1) == 0 ? value : value + 1;
+        }
     }
 
-    private sealed record DsfInfo(int Channels, int SampleRate, ulong SampleCount, int BlockSizePerChannel, long DataOffset, long DataEnd);
+    private sealed record DsfInfo(int Channels, int SampleRate, ulong SampleCount, int BlockSizePerChannel, long DataOffset, long DataEnd, bool IsDff);
 
     private sealed record DsfChunk(string Id, ulong Size, long HeaderStart);
 }

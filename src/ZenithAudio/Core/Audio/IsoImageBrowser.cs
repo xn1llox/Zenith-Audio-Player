@@ -17,7 +17,11 @@ public static class IsoImageBrowser
         ".alac",
         ".mp3",
         ".aac",
-        ".ogg"
+        ".ogg",
+        ".opus",
+        ".ape",
+        ".wv",
+        ".cue"
     };
 
     public static Task<List<IsoAudioEntry>> ScanAsync(string isoPath)

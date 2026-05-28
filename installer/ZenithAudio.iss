@@ -1,5 +1,5 @@
 #define MyAppName "Zenith Audio"
-#define MyAppVersion "1.0.4"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "Felipe Espinoza"
 #define MyAppExeName "ZenithAudio.exe"
 #define SourceDir "..\src\ZenithAudio\bin\Release\net8.0-windows10.0.19041.0\win-x64"
@@ -18,7 +18,7 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\artifacts\installer
-OutputBaseFilename=ZenithAudio_Setup_Inno_win-x64
+OutputBaseFilename=ZenithAudio_v{#MyAppVersion}_Setup_win-x64_wavfix
 SetupIconFile=..\src\ZenithAudio\Assets\Icono.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

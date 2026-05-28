@@ -45,7 +45,12 @@ public partial class App : Application
 
     private static void LogStartupException(Exception ex)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "startup-error.log");
+        var logDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ZenithAudio",
+            "Logs");
+        Directory.CreateDirectory(logDirectory);
+        var path = Path.Combine(logDirectory, "startup-error.log");
         File.WriteAllText(path, ex.ToString());
         Debug.WriteLine(ex);
     }

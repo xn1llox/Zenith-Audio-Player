@@ -8,5 +8,9 @@ public sealed class AudioEngineOptions
 
     public int DeviceIndex { get; init; } = -1;
 
+    public string? DeviceName { get; init; }
+
+    public string? DeviceId { get; init; }
+
     public int BufferMilliseconds { get; init; } = 100;
 }
