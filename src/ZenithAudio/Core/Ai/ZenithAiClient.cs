@@ -59,10 +59,11 @@ public sealed class ZenithAiClient
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, Settings.Endpoint);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.ApiKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", NormalizeApiKey(Settings.ApiKey));
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
 
-        using var response = await HttpClient.SendAsync(request, cancellationToken);
+        using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -114,5 +115,14 @@ public sealed class ZenithAiClient
     {
         value = value.Trim();
         return value.Length <= 700 ? value : value[..700] + "...";
+    }
+
+    private static string NormalizeApiKey(string apiKey)
+    {
+        apiKey = apiKey.Trim();
+        const string bearerPrefix = "Bearer ";
+        return apiKey.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase)
+            ? apiKey[bearerPrefix.Length..].Trim()
+            : apiKey;
     }
 }

@@ -80,6 +80,7 @@ public sealed partial class MainWindow : Window
     private readonly ZenithAiClient _zenithAiClient = new();
     private readonly List<ZenithAiChatMessage> _zenithAiMessages = [];
     private CancellationTokenSource? _zenithAiRequestCancellation;
+    private bool _zenithAiCancelRequestedByUser;
     private bool _isDraggingZenithAiPanel;
     private Windows.Foundation.Point _zenithAiDragStartPoint;
     private double _zenithAiDragStartX;
@@ -672,6 +673,13 @@ public sealed partial class MainWindow : Window
         await SendZenithAiQuestionAsync();
     }
 
+    private void ZenithAiCancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        _zenithAiCancelRequestedByUser = true;
+        ZenithAiStatusTextBlock.Text = "Cancelando consulta...";
+        _zenithAiRequestCancellation?.Cancel();
+    }
+
     private async void ZenithAiQuestionTextBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
         if (e.Key != Windows.System.VirtualKey.Enter)
@@ -695,32 +703,49 @@ public sealed partial class MainWindow : Window
         _zenithAiMessages.Add(new ZenithAiChatMessage("user", question));
         RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth(), "ZenithAI esta pensando...");
         ZenithAiSendButton.IsEnabled = false;
+        ZenithAiCancelButton.IsEnabled = true;
         ZenithAiClearButton.IsEnabled = false;
-        ZenithAiStatusTextBlock.Text = "Consultando API en la nube. Limite de espera: 180 segundos.";
+        ZenithAiStatusTextBlock.Text = $"Consultando {_zenithAiClient.Settings.Provider} con modelo {_zenithAiClient.Settings.Model}...";
 
         _zenithAiRequestCancellation?.Cancel();
         _zenithAiRequestCancellation?.Dispose();
-        _zenithAiRequestCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+        _zenithAiCancelRequestedByUser = false;
+        _zenithAiRequestCancellation = new CancellationTokenSource();
+
+        using var timeoutCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _zenithAiRequestCancellation.Token,
+            timeoutCancellation.Token);
+        using var progressCancellation = new CancellationTokenSource();
+        var progressTask = UpdateZenithAiRequestProgressAsync(
+            _zenithAiClient.Settings.Provider,
+            _zenithAiClient.Settings.Model,
+            progressCancellation.Token);
+        WriteZenithAiDiagnostic($"request-start provider={_zenithAiClient.Settings.Provider} model={_zenithAiClient.Settings.Model} endpoint={FormatEndpointForDiagnostics(_zenithAiClient.Settings.Endpoint)}");
 
         try
         {
             var response = await _zenithAiClient.SendAsync(
                 _zenithAiMessages,
                 BuildZenithAiAudioContext(),
-                _zenithAiRequestCancellation.Token);
+                linkedCancellation.Token);
 
             _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", response));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
             ZenithAiStatusTextBlock.Text = "Listo. ZenithAI no usa modelos locales ni carga el CPU/GPU para inferencia.";
+            WriteZenithAiDiagnostic("request-ok");
         }
         catch (OperationCanceledException)
         {
-            var message = ZenithAiOverlayGrid.Visibility == Visibility.Visible
-                ? "La API no respondio dentro de 180 segundos. Prueba otro modelo, reduce la pregunta o revisa NVIDIA NIM."
-                : "Consulta cancelada al cerrar ZenithAI.";
+            var message = _zenithAiCancelRequestedByUser
+                ? "Consulta cancelada por el usuario."
+                : timeoutCancellation.IsCancellationRequested
+                    ? "La API no respondio dentro de 120 segundos. Prueba otro modelo de NVIDIA NIM, reduce la pregunta o revisa el endpoint."
+                    : "Consulta cancelada al cerrar ZenithAI.";
             _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", message));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
             ZenithAiStatusTextBlock.Text = message;
+            WriteZenithAiDiagnostic($"request-canceled user={_zenithAiCancelRequestedByUser} timeout={timeoutCancellation.IsCancellationRequested}");
         }
         catch (Exception ex)
         {
@@ -728,12 +753,66 @@ public sealed partial class MainWindow : Window
             _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", $"No pude conectar con {provider}: {ex.Message}"));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
             ZenithAiStatusTextBlock.Text = "Revisa conexion, API key, endpoint o disponibilidad del modelo.";
+            WriteZenithAiDiagnostic($"request-error {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
+            progressCancellation.Cancel();
+            try
+            {
+                await progressTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
             ZenithAiSendButton.IsEnabled = true;
+            ZenithAiCancelButton.IsEnabled = false;
             ZenithAiClearButton.IsEnabled = true;
+            _zenithAiRequestCancellation?.Dispose();
+            _zenithAiRequestCancellation = null;
             ScrollZenithAiTranscriptToEnd(ZenithAiTranscriptScrollViewer);
+        }
+    }
+
+    private static string ZenithAiDiagnosticPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ZenithAudio",
+        "zenithai.log");
+
+    private static void WriteZenithAiDiagnostic(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ZenithAiDiagnosticPath)!);
+            File.AppendAllText(
+                ZenithAiDiagnosticPath,
+                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz} {message}{Environment.NewLine}");
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static string FormatEndpointForDiagnostics(string endpoint)
+    {
+        return Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            ? $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath}"
+            : "endpoint-invalido";
+    }
+
+    private async Task UpdateZenithAiRequestProgressAsync(string provider, string model, CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.Now;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            var elapsed = (int)Math.Max(1, (DateTimeOffset.Now - startedAt).TotalSeconds);
+            ZenithAiStatusTextBlock.Text = $"Esperando respuesta de {provider} ({model})... {elapsed}s / 120s";
         }
     }
 

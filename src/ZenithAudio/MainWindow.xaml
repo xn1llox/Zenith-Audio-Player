@@ -1342,6 +1342,10 @@
                         <Button x:Name="ZenithAiSendButton"
                                 Content="Enviar"
                                 Click="ZenithAiSendButton_Click" />
+                        <Button x:Name="ZenithAiCancelButton"
+                                Content="Cancelar"
+                                IsEnabled="False"
+                                Click="ZenithAiCancelButton_Click" />
                         <Button x:Name="ZenithAiClearButton"
                                 Content="Limpiar"
                                 Click="ZenithAiClearButton_Click" />
