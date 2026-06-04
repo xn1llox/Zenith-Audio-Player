@@ -2,7 +2,7 @@
 
 Zenith Audio Player es un reproductor de música para Windows creado con C#, WinUI 3, XAML y Windows App SDK. El proyecto está enfocado en bibliotecas locales de alta resolución, reproducción DSD/DSF, extracción SACD ISO, configuración de dispositivos de audio, visualización audiófila, letras, carátulas y un asistente opcional llamado ZenithAI.
 
-<img width="1914" height="1025" alt="image" src="https://github.com/user-attachments/assets/a1a53a4f-4c47-4f00-b304-5a64c6cf8455" />
+<img width="1913" height="1026" alt="image" src="https://github.com/user-attachments/assets/48a8c3c3-3bad-4e4a-a698-935777a93ffb" />
 
 **Versión actual:** `1.0.6`  
 **Instalador recomendado:** [`ZenithAudio_v1.0.6_Setup_win-x64_wavfix.exe`](https://github.com/xn1llox/Zenith-Audio-Player/releases/download/v1.0.6/ZenithAudio_v1.0.6_Setup_win-x64_wavfix.exe)
