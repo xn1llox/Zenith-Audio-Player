@@ -1349,9 +1349,46 @@
                         <Button x:Name="ZenithAiClearButton"
                                 Content="Limpiar"
                                 Click="ZenithAiClearButton_Click" />
+                        <Button x:Name="ZenithAiCommandsButton"
+                                Content="Comandos"
+                                Click="ZenithAiCommandsButton_Click" />
                         <Button x:Name="ZenithAiConfigButton"
                                 Content="Config"
                                 Click="ZenithAiConfigButton_Click" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="ZenithAiCommandsPanel"
+                                Grid.Row="5"
+                                Spacing="8"
+                                Visibility="Collapsed"
+                                Margin="0,2,0,0">
+                        <TextBlock Text="Comandos locales de tono"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Text="Estos comandos se aplican al instante en Zenith Audio, sin esperar respuesta de la nube."
+                                   TextWrapping="WrapWholeWords"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition />
+                                <ColumnDefinition />
+                                <ColumnDefinition />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Button Content="Audio mas puro" Tag="quiero audio mas puro" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Column="1" Content="Mas graves" Tag="quiero mas graves" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Column="2" Content="Menos graves" Tag="quiero menos graves" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Row="1" Content="Mas agudos" Tag="quiero mas agudos" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Row="1" Grid.Column="1" Content="Menos agudos" Tag="quiero menos agudos" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Mas calido" Tag="quiero audio mas calido" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Row="2" Content="Mas detalle" Tag="quiero mas detalle" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Row="2" Grid.Column="1" Content="Voces al frente" Tag="quiero voces al frente" Click="ZenithAiCommandChip_Click" />
+                            <Button Grid.Row="2" Grid.Column="2" Content="Automatico" Tag="ajusta el perfil automatico segun la musica" Click="ZenithAiCommandChip_Click" />
+                        </Grid>
                     </StackPanel>
 
                     <StackPanel x:Name="ZenithAiApiSettingsPanel"

@@ -630,6 +630,12 @@ public sealed partial class MainWindow : Window
 
     private void ZenithAiConfigButton_Click(object sender, RoutedEventArgs e)
     {
+        if (ZenithAiCommandsPanel.Visibility == Visibility.Visible)
+        {
+            ZenithAiCommandsPanel.Visibility = Visibility.Collapsed;
+            ZenithAiCommandsButton.Content = "Comandos";
+        }
+
         ZenithAiApiSettingsPanel.Visibility = ZenithAiApiSettingsPanel.Visibility == Visibility.Visible
             ? Visibility.Collapsed
             : Visibility.Visible;
@@ -637,6 +643,36 @@ public sealed partial class MainWindow : Window
         ZenithAiStatusTextBlock.Text = _zenithAiClient.IsConfigured
             ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
             : "Falta API key. Usa Config para guardar NVIDIA NIM u otra API compatible.";
+    }
+
+    private void ZenithAiCommandsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ZenithAiApiSettingsPanel.Visibility == Visibility.Visible)
+        {
+            ZenithAiApiSettingsPanel.Visibility = Visibility.Collapsed;
+            ZenithAiConfigButton.Content = "Config";
+        }
+
+        ZenithAiCommandsPanel.Visibility = ZenithAiCommandsPanel.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        ZenithAiCommandsButton.Content = ZenithAiCommandsPanel.Visibility == Visibility.Visible ? "Ocultar comandos" : "Comandos";
+        ZenithAiStatusTextBlock.Text = ZenithAiCommandsPanel.Visibility == Visibility.Visible
+            ? "Elige un comando, revisalo y presiona Enviar para aplicarlo."
+            : "Comandos ocultos.";
+    }
+
+    private void ZenithAiCommandChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string command })
+        {
+            return;
+        }
+
+        ZenithAiQuestionTextBox.Text = command;
+        ZenithAiQuestionTextBox.Focus(FocusState.Programmatic);
+        ZenithAiQuestionTextBox.SelectionStart = ZenithAiQuestionTextBox.Text.Length;
+        ZenithAiStatusTextBlock.Text = "Comando cargado. Presiona Enviar para aplicarlo.";
     }
 
     private void ZenithAiSaveApiButton_Click(object sender, RoutedEventArgs e)
