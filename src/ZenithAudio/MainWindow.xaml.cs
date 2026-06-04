@@ -761,16 +761,90 @@ public sealed partial class MainWindow : Window
             Child = contentPanel
         };
 
+        var dialogTransform = new TranslateTransform();
+        var titleDragHandle = new Border
+        {
+            Padding = new Thickness(0, 0, 0, 2),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(1, 255, 255, 255)),
+            Child = new StackPanel
+            {
+                Spacing = 2,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "ZenithAI (BETA)",
+                        FontSize = 20,
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                        TextWrapping = TextWrapping.Wrap
+                    },
+                    new TextBlock
+                    {
+                        Text = "Arrastra este encabezado para mover el chat",
+                        FontSize = 12,
+                        Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                        TextWrapping = TextWrapping.Wrap
+                    }
+                }
+            }
+        };
+
+        var dragCoordinateRoot = Content as UIElement;
+        var isDraggingZenithAi = false;
+        var dragStartPoint = new Windows.Foundation.Point();
+        var dragStartX = 0d;
+        var dragStartY = 0d;
+
+        void StopZenithAiDrag()
+        {
+            isDraggingZenithAi = false;
+        }
+
+        titleDragHandle.PointerPressed += (_, args) =>
+        {
+            isDraggingZenithAi = true;
+            dragStartPoint = args.GetCurrentPoint(dragCoordinateRoot ?? titleDragHandle).Position;
+            dragStartX = dialogTransform.X;
+            dragStartY = dialogTransform.Y;
+            titleDragHandle.CapturePointer(args.Pointer);
+            args.Handled = true;
+        };
+
+        titleDragHandle.PointerMoved += (_, args) =>
+        {
+            if (!isDraggingZenithAi)
+            {
+                return;
+            }
+
+            var currentPoint = args.GetCurrentPoint(dragCoordinateRoot ?? titleDragHandle).Position;
+            var requestedX = dragStartX + currentPoint.X - dragStartPoint.X;
+            var requestedY = dragStartY + currentPoint.Y - dragStartPoint.Y;
+            dialogTransform.X = Math.Clamp(requestedX, -AppWindow.Size.Width * 0.45, AppWindow.Size.Width * 0.45);
+            dialogTransform.Y = Math.Clamp(requestedY, -AppWindow.Size.Height * 0.35, AppWindow.Size.Height * 0.35);
+            args.Handled = true;
+        };
+
+        titleDragHandle.PointerReleased += (_, args) =>
+        {
+            StopZenithAiDrag();
+            titleDragHandle.ReleasePointerCapture(args.Pointer);
+            args.Handled = true;
+        };
+        titleDragHandle.PointerCanceled += (_, _) => StopZenithAiDrag();
+        titleDragHandle.PointerCaptureLost += (_, _) => StopZenithAiDrag();
+
         using var cancellationTokenSource = new CancellationTokenSource();
         var dialog = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
-            Title = "ZenithAI (BETA)",
+            Title = titleDragHandle,
             Content = glassPanel,
             CloseButtonText = "Cerrar",
             DefaultButton = ContentDialogButton.None,
             MinWidth = dialogWidth + 52,
-            MaxWidth = dialogWidth + 52
+            MaxWidth = dialogWidth + 52,
+            RenderTransform = dialogTransform
         };
         dialog.Resources["ContentDialogMinWidth"] = dialogWidth + 52;
         dialog.Resources["ContentDialogMaxWidth"] = dialogWidth + 52;
