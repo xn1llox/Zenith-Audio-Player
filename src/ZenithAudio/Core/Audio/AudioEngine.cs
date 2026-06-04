@@ -365,13 +365,24 @@ public sealed class AudioEngine : IDisposable
                 }
 
                 if (!string.IsNullOrWhiteSpace(options.DeviceName) &&
-                    name.Contains(options.DeviceName, StringComparison.CurrentCultureIgnoreCase))
+                    (name.Contains(options.DeviceName, StringComparison.CurrentCultureIgnoreCase) ||
+                        options.DeviceName.Contains(name, StringComparison.CurrentCultureIgnoreCase) ||
+                        NormalizeDeviceName(name).Contains(NormalizeDeviceName(options.DeviceName), StringComparison.Ordinal) ||
+                        NormalizeDeviceName(options.DeviceName).Contains(NormalizeDeviceName(name), StringComparison.Ordinal)))
                 {
                     return index;
                 }
             }
 
             return -1;
+        }
+
+        private static string NormalizeDeviceName(string value)
+        {
+            return new string(value
+                .ToLowerInvariant()
+                .Where(char.IsLetterOrDigit)
+                .ToArray());
         }
 
         private int WasapiCallback(IntPtr buffer, int length, IntPtr user)

@@ -3,9 +3,11 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using Windows.Devices.Enumeration;
+using Windows.Graphics.Imaging;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage.Pickers;
@@ -34,6 +36,7 @@ public sealed partial class MainWindow : Window
         ".wv",
         ".mp3",
         ".aac",
+        ".m4a",
         ".ogg",
         ".opus",
         ".cue"
@@ -66,6 +69,7 @@ public sealed partial class MainWindow : Window
         ".aif",
         ".mp3",
         ".aac",
+        ".m4a",
         ".ogg",
         ".opus"
     };
@@ -104,6 +108,7 @@ public sealed partial class MainWindow : Window
     private bool _isApplyingAdaptiveBuffer;
     private string _bufferProfile = "manual";
     private CueAudioEntry? _pendingCueEntry;
+    private Windows.UI.Color _dynamicAccentColor = GetDefaultOledBlueAccent();
 
     public MainWindow()
     {
@@ -117,7 +122,7 @@ public sealed partial class MainWindow : Window
         _vuTimer.Interval = TimeSpan.FromMilliseconds(16);
         _vuTimer.Tick += VuTimer_Tick;
         RefreshBackendLabels();
-        LibraryBrowserListView.ItemsSource = Array.Empty<object>();
+        LibraryBrowserListView.ItemsSource = Array.Empty<LibraryBrowserItem>();
         LibraryFoldersListView.ItemsSource = _libraryFolders;
         AutoEqSearchBox.ItemsSource = new[]
         {
@@ -533,6 +538,11 @@ public sealed partial class MainWindow : Window
                 OutputDeviceComboBox.ItemsSource = _outputDevices;
 
                 var selectedIndex = _outputDevices.FindIndex(device => !string.IsNullOrWhiteSpace(selectedId) && device.Id == selectedId);
+                if (selectedIndex < 0)
+                {
+                    selectedIndex = _outputDevices.FindIndex(device => device.IsKnownZishanZ2);
+                }
+
                 OutputDeviceComboBox.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
 
                 StatusInfoBar.Severity = InfoBarSeverity.Informational;
@@ -1144,21 +1154,33 @@ public sealed partial class MainWindow : Window
 
     private void LibraryBrowserListView_ItemClick(object sender, ItemClickEventArgs e)
     {
+        if (e.ClickedItem is LibraryBrowserItem item)
+        {
+            if (item.IsHeader)
+            {
+                LibraryBrowserListView.SelectedItem = null;
+                return;
+            }
+
+            if (item.Track is { } clickedTrack)
+            {
+                LoadLibraryTrack(clickedTrack, play: false);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(item.FolderPath))
+            {
+                LibraryFoldersListView.SelectedItem = item.FolderPath;
+                ShowTrackBrowser(
+                    Path.GetFileName(item.FolderPath.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } folderName ? folderName : item.FolderPath,
+                    _libraryTracks.Where(track => track.Folder.Equals(item.FolderPath, StringComparison.OrdinalIgnoreCase)));
+                return;
+            }
+        }
+
         if (e.ClickedItem is LibraryTrack track)
         {
-            if (track.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
-            {
-                _ = OpenIsoImageAsync(track.Path);
-                return;
-            }
-
-            if (track.Extension.Equals(".cue", StringComparison.OrdinalIgnoreCase))
-            {
-                _ = OpenCueSheetAsync(track.Path);
-                return;
-            }
-
-            LoadTrack(track.Path);
+            LoadLibraryTrack(track, play: false);
             return;
         }
 
@@ -1172,12 +1194,29 @@ public sealed partial class MainWindow : Window
 
     private async void LibraryBrowserListView_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
-        if (LibraryBrowserListView.SelectedItem is not LibraryTrack track)
+        var selectedTrack = LibraryBrowserListView.SelectedItem switch
+        {
+            LibraryBrowserItem { Track: { } itemTrack, IsHeader: false } => itemTrack,
+            LibraryTrack track => track,
+            _ => null
+        };
+
+        if (selectedTrack is null)
         {
             return;
         }
 
         StopCurrentPlaybackForTrackChange();
+        await LoadLibraryTrackAsync(selectedTrack, play: true);
+    }
+
+    private void LoadLibraryTrack(LibraryTrack track, bool play)
+    {
+        _ = LoadLibraryTrackAsync(track, play);
+    }
+
+    private async Task LoadLibraryTrackAsync(LibraryTrack track, bool play)
+    {
         if (track.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
         {
             await OpenIsoImageAsync(track.Path);
@@ -1191,7 +1230,10 @@ public sealed partial class MainWindow : Window
         }
 
         LoadTrack(track.Path);
-        PlayButton_Click(this, null!);
+        if (play)
+        {
+            PlayButton_Click(this, null!);
+        }
     }
 
     private void AudioEngine_PlaybackStateChanged(object? sender, PlaybackState state)
@@ -1208,11 +1250,10 @@ public sealed partial class MainWindow : Window
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            BitrateTextBlock.Text = signal.BitrateKbps > 0 ? $"{signal.BitrateKbps:N0} kbps" : "-- kbps";
-            SampleRateTextBlock.Text = signal.SampleRate > 0 ? $"{signal.SampleRate / 1000.0:N1} kHz" : "-- kHz";
-            BitDepthTextBlock.Text = signal.IsDsd ? "1-bit DSD" : $"{signal.BitDepth} bit";
-            ChannelsTextBlock.Text = signal.Channels > 0 ? signal.Channels.ToString() : "--";
-            CodecTextBlock.Text = string.IsNullOrWhiteSpace(signal.Codec) ? "Desconocido" : signal.Codec;
+            var metadata = string.IsNullOrWhiteSpace(_currentFilePath)
+                ? AudioFileMetadata.Empty
+                : InspectAudioFile(GetEffectivePlaybackPath(_currentFilePath));
+            ApplySignalLabels(signal, metadata);
             UpdateSignalChain("Decodificación nativa");
         });
     }
@@ -1426,6 +1467,11 @@ public sealed partial class MainWindow : Window
 
     private void AnalyzeCurrentTrackButton_Click(object sender, RoutedEventArgs e)
     {
+        RefreshAntiFakeReport(showStatus: true);
+    }
+
+    private void RefreshAntiFakeReport(bool showStatus)
+    {
         if (string.IsNullOrWhiteSpace(_currentFilePath))
         {
             LabAuthenticityTextBlock.Text = "Autenticidad: sin archivo cargado";
@@ -1452,8 +1498,12 @@ public sealed partial class MainWindow : Window
         LabFindingTextBlock.Text = report.Finding;
         LabRecommendationTextBlock.Text = report.Recommendation;
 
-        StatusInfoBar.Severity = InfoBarSeverity.Informational;
-        StatusInfoBar.Message = $"Laboratorio Anti-Fake: reporte generado para {report.Format}. Indice preliminar {report.Score}/100.";
+        if (showStatus)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Informational;
+            StatusInfoBar.Message = $"Laboratorio Anti-Fake: reporte generado para {report.Format}. Indice preliminar {report.Score}/100.";
+        }
+
         if (report.Score >= 0)
         {
             return;
@@ -1480,23 +1530,28 @@ public sealed partial class MainWindow : Window
             LabFindingTextBlock.Text = $"Formato {extension}. Puede reproducirse correctamente, pero no corresponde a una fuente audiófila sin pérdida para auditoría Hi-Res.";
         }
 
-        StatusInfoBar.Severity = InfoBarSeverity.Informational;
-        StatusInfoBar.Message = "Laboratorio Anti-Fake: análisis preliminar completado con metadatos. Espectrograma FFT real queda preparado como siguiente módulo.";
+        if (showStatus)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Informational;
+            StatusInfoBar.Message = "Laboratorio Anti-Fake: análisis preliminar completado con metadatos. Espectrograma FFT real queda preparado como siguiente módulo.";
+        }
     }
 
     private AntiFakeReport BuildAntiFakeReport(string filePath)
     {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        var analysisPath = GetEffectivePlaybackPath(filePath);
+        var metadata = InspectAudioFile(analysisPath);
+        var extension = GetAnalysisExtension(filePath, analysisPath).ToLowerInvariant();
         var extensionLabel = extension.TrimStart('.').ToUpperInvariant();
-        var codec = CleanMetric(CodecTextBlock.Text, extensionLabel);
-        var sampleRate = CleanMetric(SampleRateTextBlock.Text, "-- kHz");
-        var bitDepth = CleanMetric(BitDepthTextBlock.Text, "-- bit");
-        var bitrate = CleanMetric(BitrateTextBlock.Text, "-- kbps");
-        var sizeLabel = GetFileSizeLabel(filePath);
+        var codec = CleanMetric(metadata.Codec, CleanMetric(CodecTextBlock.Text, extensionLabel));
+        var sampleRate = CleanMetric(FormatSampleRate(metadata), CleanMetric(SampleRateTextBlock.Text, "-- kHz"));
+        var bitDepth = CleanMetric(FormatBitDepth(metadata), CleanMetric(BitDepthTextBlock.Text, "-- bit"));
+        var bitrate = CleanMetric(FormatBitrate(metadata), CleanMetric(BitrateTextBlock.Text, "-- kbps"));
+        var sizeLabel = GetFileSizeLabel(File.Exists(analysisPath) ? analysisPath : filePath);
         var outputStatus = SignalBitPerfectTextBlock?.Text ?? "Sin validar";
         var dspStatus = _toneSettings.IsActive ? "DSP/EQ activo" : "DSP en bypass";
 
-        if (extension is ".mp3" or ".aac" or ".ogg" or ".m4a")
+        if (IsLossyFormat(extension, codec))
         {
             var score = extension == ".mp3" ? 35 : 42;
             return new AntiFakeReport(
@@ -1513,7 +1568,7 @@ public sealed partial class MainWindow : Window
 
         if (extension is ".dsf" or ".dff")
         {
-            var dsdLabel = DetectDsdRateLabel(filePath);
+            var dsdLabel = DetectDsdRateLabel(analysisPath);
             var score = _usingFallbackPlayer ? 88 : 96;
             var risk = _usingFallbackPlayer ? "Conversión DSD -> PCM activa" : "Bajo si la cadena es nativa";
             return new AntiFakeReport(
@@ -1542,7 +1597,7 @@ public sealed partial class MainWindow : Window
                 "Reproducir una pista extraída y ejecutar nuevamente el reporte por pista para validar ruta DSD, buffer y salida.");
         }
 
-        if (extension is ".flac" or ".wav" or ".aiff" or ".aif" or ".alac" or ".mqa")
+        if (extension is ".flac" or ".wav" or ".aiff" or ".aif" or ".alac" or ".m4a" or ".ape" or ".wv" or ".mqa")
         {
             var sampleRateValue = ParseKHz(sampleRate);
             var score = sampleRateValue >= 88.2 ? 82 : 72;
@@ -1581,7 +1636,198 @@ public sealed partial class MainWindow : Window
 
     private static string CleanMetric(string? value, string fallback)
     {
-        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+        return string.IsNullOrWhiteSpace(value) || value.StartsWith("--", StringComparison.Ordinal) ? fallback : value;
+    }
+
+    private void ApplySignalMetadataForTrack(string filePath)
+    {
+        var metadata = InspectAudioFile(GetEffectivePlaybackPath(filePath));
+        ApplySignalLabels(null, metadata);
+    }
+
+    private void ApplySignalLabels(AudioSignalInfo? signal, AudioFileMetadata metadata)
+    {
+        var merged = metadata;
+        if (signal is not null)
+        {
+            merged = metadata with
+            {
+                SampleRate = signal.SampleRate > 0 ? signal.SampleRate : metadata.SampleRate,
+                BitDepth = signal.BitDepth > 0 ? signal.BitDepth : metadata.BitDepth,
+                Channels = signal.Channels > 0 ? signal.Channels : metadata.Channels,
+                BitrateKbps = signal.BitrateKbps > 0 ? signal.BitrateKbps : metadata.BitrateKbps,
+                IsDsd = signal.IsDsd || metadata.IsDsd,
+                Codec = string.IsNullOrWhiteSpace(signal.Codec) ? metadata.Codec : signal.Codec
+            };
+        }
+
+        BitrateTextBlock.Text = FormatBitrate(merged);
+        SampleRateTextBlock.Text = FormatSampleRate(merged);
+        BitDepthTextBlock.Text = FormatBitDepth(merged);
+        ChannelsTextBlock.Text = merged.Channels > 0 ? merged.Channels.ToString(CultureInfo.InvariantCulture) : "--";
+        CodecTextBlock.Text = string.IsNullOrWhiteSpace(merged.Codec) ? "Desconocido" : merged.Codec;
+    }
+
+    private static AudioFileMetadata InspectAudioFile(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return AudioFileMetadata.Empty;
+        }
+
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        var metadata = AudioFileMetadata.Empty with
+        {
+            Codec = GetDefaultCodecLabel(extension),
+            IsDsd = extension is ".dsf" or ".dff"
+        };
+
+        if (!File.Exists(filePath))
+        {
+            return metadata;
+        }
+
+        try
+        {
+            using var tagFile = TagLib.File.Create(filePath);
+            var properties = tagFile.Properties;
+            metadata = metadata with
+            {
+                Codec = GetCodecLabel(extension, properties),
+                SampleRate = properties.AudioSampleRate,
+                BitDepth = properties.BitsPerSample,
+                Channels = properties.AudioChannels,
+                BitrateKbps = properties.AudioBitrate,
+                IsDsd = metadata.IsDsd
+            };
+        }
+        catch (Exception)
+        {
+        }
+
+        if (extension.Equals(".wav", StringComparison.OrdinalIgnoreCase) &&
+            (metadata.SampleRate <= 0 || metadata.BitDepth <= 0 || metadata.Channels <= 0))
+        {
+            metadata = InspectWaveFile(filePath, metadata);
+        }
+
+        return metadata;
+    }
+
+    private static AudioFileMetadata InspectWaveFile(string filePath, AudioFileMetadata fallback)
+    {
+        try
+        {
+            using var reader = new NAudio.Wave.WaveFileReader(filePath);
+            return fallback with
+            {
+                Codec = string.IsNullOrWhiteSpace(fallback.Codec) ? "PCM WAV" : fallback.Codec,
+                SampleRate = fallback.SampleRate > 0 ? fallback.SampleRate : reader.WaveFormat.SampleRate,
+                BitDepth = fallback.BitDepth > 0 ? fallback.BitDepth : reader.WaveFormat.BitsPerSample,
+                Channels = fallback.Channels > 0 ? fallback.Channels : reader.WaveFormat.Channels,
+                BitrateKbps = fallback.BitrateKbps > 0
+                    ? fallback.BitrateKbps
+                    : (reader.WaveFormat.AverageBytesPerSecond * 8 / 1000)
+            };
+        }
+        catch (Exception)
+        {
+            return fallback;
+        }
+    }
+
+    private static string GetCodecLabel(string extension, TagLib.Properties properties)
+    {
+        var codec = properties.Codecs.FirstOrDefault()?.Description;
+        if (!string.IsNullOrWhiteSpace(codec))
+        {
+            return codec;
+        }
+
+        return GetDefaultCodecLabel(extension);
+    }
+
+    private static string GetDefaultCodecLabel(string extension)
+    {
+        return extension switch
+        {
+            ".flac" => "FLAC",
+            ".wav" => "PCM WAV",
+            ".aiff" or ".aif" => "AIFF PCM",
+            ".alac" or ".m4a" => "ALAC/AAC",
+            ".ape" => "Monkey's Audio",
+            ".wv" => "WavPack",
+            ".opus" => "Opus",
+            ".ogg" => "Ogg",
+            ".mp3" => "MP3",
+            ".aac" => "AAC",
+            ".mqa" => "MQA/FLAC",
+            ".dsf" or ".dff" => "DSD",
+            ".iso" => "SACD ISO",
+            _ => extension.TrimStart('.').ToUpperInvariant()
+        };
+    }
+
+    private static string FormatSampleRate(AudioFileMetadata metadata)
+    {
+        if (metadata.SampleRate <= 0)
+        {
+            return metadata.IsDsd ? "DSD" : "-- kHz";
+        }
+
+        if (metadata.IsDsd)
+        {
+            return $"{metadata.SampleRate / 1_000_000.0:N4} MHz";
+        }
+
+        return $"{metadata.SampleRate / 1000.0:N1} kHz";
+    }
+
+    private static string FormatBitDepth(AudioFileMetadata metadata)
+    {
+        if (metadata.IsDsd)
+        {
+            return "1-bit DSD";
+        }
+
+        return metadata.BitDepth > 0 ? $"{metadata.BitDepth} bit" : "-- bit";
+    }
+
+    private static string FormatBitrate(AudioFileMetadata metadata)
+    {
+        return metadata.BitrateKbps > 0 ? $"{metadata.BitrateKbps:N0} kbps" : "-- kbps";
+    }
+
+    private static string GetAnalysisExtension(string originalPath, string analysisPath)
+    {
+        var analysisExtension = Path.GetExtension(analysisPath);
+        if (!string.IsNullOrWhiteSpace(analysisExtension))
+        {
+            return analysisExtension;
+        }
+
+        return Path.GetExtension(originalPath);
+    }
+
+    private static bool IsLossyFormat(string extension, string codec)
+    {
+        if (extension is ".mp3" or ".aac" or ".opus")
+        {
+            return true;
+        }
+
+        if (extension is ".ogg")
+        {
+            return !codec.Contains("FLAC", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (extension is ".m4a")
+        {
+            return !codec.Contains("ALAC", StringComparison.OrdinalIgnoreCase) &&
+                   !codec.Contains("Apple Lossless", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static double ParseKHz(string value)
@@ -1651,6 +1897,17 @@ public sealed partial class MainWindow : Window
         string Risk,
         string Finding,
         string Recommendation);
+
+    private sealed record AudioFileMetadata(
+        string Codec,
+        int SampleRate,
+        int BitDepth,
+        int Channels,
+        int BitrateKbps,
+        bool IsDsd)
+    {
+        public static AudioFileMetadata Empty { get; } = new(string.Empty, 0, 0, 0, 0, false);
+    }
 
     private void ApplyAdaptiveBufferForTrack(string filePath)
     {
@@ -1817,6 +2074,7 @@ public sealed partial class MainWindow : Window
             CoverArtImage.Visibility = Visibility.Visible;
             CoverPlaceholderPanel.Visibility = Visibility.Collapsed;
             CoverHintTextBlock.Text = Path.GetFileName(coverPath);
+            await ApplyDynamicAccentFromFileAsync(coverPath);
         }
         catch (Exception)
         {
@@ -1851,6 +2109,7 @@ public sealed partial class MainWindow : Window
             CoverArtImage.Visibility = Visibility.Visible;
             CoverPlaceholderPanel.Visibility = Visibility.Collapsed;
             CoverHintTextBlock.Text = "Carátula embebida";
+            await ApplyDynamicAccentFromBytesAsync(bytes);
             return true;
         }
         catch (Exception)
@@ -1865,6 +2124,145 @@ public sealed partial class MainWindow : Window
         CoverArtImage.Visibility = Visibility.Collapsed;
         CoverPlaceholderPanel.Visibility = Visibility.Visible;
         CoverHintTextBlock.Text = hint;
+        ApplyDynamicAccent(GetDefaultOledBlueAccent());
+    }
+
+    private async Task ApplyDynamicAccentFromFileAsync(string imagePath)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(imagePath);
+            using var stream = await file.OpenReadAsync();
+            var color = await ExtractDominantColorAsync(stream);
+            ApplyDynamicAccent(color);
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private async Task ApplyDynamicAccentFromBytesAsync(byte[] bytes)
+    {
+        try
+        {
+            using var stream = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(stream.GetOutputStreamAt(0)))
+            {
+                writer.WriteBytes(bytes);
+                await writer.StoreAsync();
+                await writer.FlushAsync();
+            }
+
+            stream.Seek(0);
+            var color = await ExtractDominantColorAsync(stream);
+            ApplyDynamicAccent(color);
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private static async Task<Windows.UI.Color> ExtractDominantColorAsync(IRandomAccessStream stream)
+    {
+        var decoder = await BitmapDecoder.CreateAsync(stream);
+        var transform = new BitmapTransform
+        {
+            ScaledWidth = Math.Max(1, Math.Min(decoder.PixelWidth, 96)),
+            ScaledHeight = Math.Max(1, Math.Min(decoder.PixelHeight, 96)),
+            InterpolationMode = BitmapInterpolationMode.Linear
+        };
+        var data = await decoder.GetPixelDataAsync(
+            BitmapPixelFormat.Rgba8,
+            BitmapAlphaMode.Premultiplied,
+            transform,
+            ExifOrientationMode.IgnoreExifOrientation,
+            ColorManagementMode.DoNotColorManage);
+        var pixels = data.DetachPixelData();
+        var red = 0.0;
+        var green = 0.0;
+        var blue = 0.0;
+        var weightTotal = 0.0;
+
+        for (var i = 0; i + 3 < pixels.Length; i += 16)
+        {
+            var r = pixels[i];
+            var g = pixels[i + 1];
+            var b = pixels[i + 2];
+            var max = Math.Max(r, Math.Max(g, b));
+            var min = Math.Min(r, Math.Min(g, b));
+            var luminance = (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+            if (luminance < 28 || luminance > 232 || max - min < 18)
+            {
+                continue;
+            }
+
+            var saturationWeight = 1.0 + ((max - min) / 255.0);
+            var balancedWeight = saturationWeight * (1.0 - Math.Abs(luminance - 128.0) / 180.0);
+            red += r * balancedWeight;
+            green += g * balancedWeight;
+            blue += b * balancedWeight;
+            weightTotal += balancedWeight;
+        }
+
+        if (weightTotal <= 0.01)
+        {
+            return GetDefaultOledBlueAccent();
+        }
+
+        var dominant = Microsoft.UI.ColorHelper.FromArgb(
+            255,
+            (byte)Math.Clamp(red / weightTotal, 64, 224),
+            (byte)Math.Clamp(green / weightTotal, 64, 224),
+            (byte)Math.Clamp(blue / weightTotal, 64, 224));
+        return ToOledBlueAccent(dominant);
+    }
+
+    private void ApplyDynamicAccent(Windows.UI.Color accent)
+    {
+        accent = ToOledBlueAccent(accent);
+        _dynamicAccentColor = accent;
+        var accentBrush = new SolidColorBrush(accent);
+        var softBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(82, accent.R, accent.G, accent.B));
+        var borderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(154, accent.R, accent.G, accent.B));
+        var panelBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 1, 4, 9));
+        var playbackBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 2, 6, 11));
+
+        PlaybackProgressSlider.Foreground = accentBrush;
+        ExclusiveModeToggle.Foreground = accentBrush;
+        CoverGlowBorder.Background = softBrush;
+        CoverCardBorder.BorderBrush = borderBrush;
+        MainListeningPanelBorder.Background = panelBrush;
+        MainListeningPanelBorder.BorderBrush = borderBrush;
+        PlaybackBarBorder.Background = playbackBrush;
+        PlaybackBarBorder.BorderBrush = borderBrush;
+
+        ExclusiveModeToggle.Resources["ToggleSwitchFillOn"] = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(230, accent.R, accent.G, accent.B));
+        ExclusiveModeToggle.Resources["ToggleSwitchFillOnPointerOver"] = accentBrush;
+        ExclusiveModeToggle.Resources["ToggleSwitchStrokeOn"] = borderBrush;
+
+        foreach (var bar in GetMiniSpectrumBars())
+        {
+            bar.Fill = accentBrush;
+        }
+    }
+
+    private static Windows.UI.Color GetDefaultOledBlueAccent()
+    {
+        return Microsoft.UI.ColorHelper.FromArgb(255, 76, 184, 255);
+    }
+
+    private static Windows.UI.Color ToOledBlueAccent(Windows.UI.Color source)
+    {
+        var red = (byte)Math.Clamp((source.R * 0.16) + 16, 16, 82);
+        var green = (byte)Math.Clamp((source.G * 0.36) + (source.B * 0.14) + 92, 108, 218);
+        var blue = (byte)Math.Clamp((source.B * 0.55) + (source.G * 0.18) + 122, 170, 255);
+
+        if (blue <= green)
+        {
+            blue = (byte)Math.Clamp(green + 28, 170, 255);
+        }
+
+        return Microsoft.UI.ColorHelper.FromArgb(255, red, green, blue);
     }
 
     private void LoadLyrics(string filePath)
@@ -1884,14 +2282,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var lyricPath = new[]
-            {
-                Path.Combine(folder, $"{name}.lrc"),
-                Path.Combine(folder, $"{name}.txt"),
-                Path.Combine(folder, "lyrics.lrc"),
-                Path.Combine(folder, "lyrics.txt")
-            }
-            .FirstOrDefault(File.Exists);
+        var lyricPath = FindLyricFile(filePath, folder, name);
 
         if (lyricPath is null)
         {
@@ -1913,11 +2304,13 @@ public sealed partial class MainWindow : Window
             LyricsStatusTextBlock.Text = Path.GetExtension(lyricPath).TrimStart('.').ToUpperInvariant();
             CurrentLyricTextBlock.Text = _syncedLyrics.Count > 0 ? "Letra sincronizada lista" : "Letra sin sincronización";
             LyricsTextBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+            SyncLyricsTab();
         }
         catch (Exception)
         {
             ShowNoLyrics();
             LyricsStatusTextBlock.Text = "error";
+            SyncLyricsTab();
         }
     }
 
@@ -1943,6 +2336,7 @@ public sealed partial class MainWindow : Window
             LyricsStatusTextBlock.Text = "embebida";
             CurrentLyricTextBlock.Text = _syncedLyrics.Count > 0 ? "Letra sincronizada lista" : "Letra embebida sin sincronización";
             LyricsTextBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+            SyncLyricsTab();
             return true;
         }
         catch (Exception)
@@ -1957,6 +2351,87 @@ public sealed partial class MainWindow : Window
         CurrentLyricTextBlock.Text = "Letra sincronizada no disponible";
         LyricsTextBlock.Text = "Sin letra local. Zenith buscar\u00e1 un archivo .lrc o .txt con el mismo nombre de la canci\u00f3n.";
         LyricsTextBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+        SyncLyricsTab();
+    }
+
+    private void SyncLyricsTab()
+    {
+        if (LyricsTabStatusTextBlock is null ||
+            LyricsTabCurrentLineTextBlock is null ||
+            LyricsTabTextBlock is null)
+        {
+            return;
+        }
+
+        LyricsTabStatusTextBlock.Text = LyricsStatusTextBlock.Text;
+        LyricsTabCurrentLineTextBlock.Text = CurrentLyricTextBlock.Text;
+        LyricsTabTextBlock.Text = LyricsTextBlock.Text;
+        LyricsTabTextBlock.Foreground = LyricsTextBlock.Foreground;
+    }
+
+    private static string? FindLyricFile(string audioPath, string folder, string baseName)
+    {
+        var fileName = Path.GetFileName(audioPath);
+        var directCandidates = new[]
+        {
+            Path.Combine(folder, $"{baseName}.lrc"),
+            Path.Combine(folder, $"{baseName}.txt"),
+            Path.Combine(folder, $"{fileName}.lrc"),
+            Path.Combine(folder, $"{fileName}.txt"),
+            Path.Combine(folder, "lyrics.lrc"),
+            Path.Combine(folder, "lyrics.txt")
+        };
+
+        var direct = directCandidates.FirstOrDefault(File.Exists);
+        if (direct is not null)
+        {
+            return direct;
+        }
+
+        try
+        {
+            var baseKey = ToLooseFileKey(baseName);
+            var fileKey = ToLooseFileKey(fileName);
+            return Directory.EnumerateFiles(folder)
+                .Where(path =>
+                    Path.GetExtension(path).Equals(".lrc", StringComparison.OrdinalIgnoreCase) ||
+                    Path.GetExtension(path).Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                .Select(path => new
+                {
+                    Path = path,
+                    Key = ToLooseFileKey(Path.GetFileNameWithoutExtension(path))
+                })
+                .FirstOrDefault(item => item.Key == baseKey || item.Key == fileKey)
+                ?.Path;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static string ToLooseFileKey(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            if (char.IsLetterOrDigit(character))
+            {
+                builder.Append(char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.ToString();
     }
 
     private static List<string> ReadLyricLines(string path)
@@ -2106,6 +2581,7 @@ public sealed partial class MainWindow : Window
 
         _currentLyricIndex = index;
         CurrentLyricTextBlock.Text = _syncedLyrics[index].Text;
+        SyncLyricsTab();
     }
 
     private void StartVuMeter()
@@ -2161,6 +2637,7 @@ public sealed partial class MainWindow : Window
         VuLevelTextBlock.Text = $"{level * 100:0}%";
         VuPeakTextBlock.Text = $"{20 * Math.Log10(Math.Max(level, 0.001)):0.0} dB";
         UpdateVuBackgroundVisualizer(level);
+        UpdateMiniSpectrum(level);
     }
 
     private void UpdateVuBackgroundVisualizer(double level)
@@ -2204,6 +2681,47 @@ public sealed partial class MainWindow : Window
         VuLevelTextBlock.Text = "0%";
         VuPeakTextBlock.Text = "-inf dB";
         UpdateVuBackgroundVisualizer(0);
+        UpdateMiniSpectrum(0);
+    }
+
+    private void UpdateMiniSpectrum(double level)
+    {
+        var bars = GetMiniSpectrumBars();
+        if (bars.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < bars.Count; i++)
+        {
+            var bandPulse = (Math.Sin(_vuPhase * (5.2 + i * 0.31) + i * 0.83) + 1.0) * 0.5;
+            var lowBandLift = 1.0 - (i / (double)(bars.Count + 2));
+            var shaped = Math.Clamp((level * (0.62 + lowBandLift * 0.42)) + (bandPulse * level * 0.45), 0.0, 1.0);
+            bars[i].Height = 4 + (shaped * 22);
+            bars[i].Opacity = Math.Clamp(0.18 + shaped * 0.55, 0.18, 0.78);
+        }
+    }
+
+    private IReadOnlyList<Microsoft.UI.Xaml.Shapes.Rectangle> GetMiniSpectrumBars()
+    {
+        if (MiniSpectrumBar01 is null)
+        {
+            return Array.Empty<Microsoft.UI.Xaml.Shapes.Rectangle>();
+        }
+
+        return new[]
+        {
+            MiniSpectrumBar01,
+            MiniSpectrumBar02,
+            MiniSpectrumBar03,
+            MiniSpectrumBar04,
+            MiniSpectrumBar05,
+            MiniSpectrumBar06,
+            MiniSpectrumBar07,
+            MiniSpectrumBar08,
+            MiniSpectrumBar09,
+            MiniSpectrumBar10
+        };
     }
 
     private static double Lerp(double from, double to, double amount)
@@ -2409,7 +2927,7 @@ public sealed partial class MainWindow : Window
         LibraryBrowserTitleTextBlock.Text = "Carpetas de música";
         LibraryBrowserSubtitleTextBlock.Text = $"{_libraryFolders.Count} carpetas configuradas";
         LibraryBrowserListView.ItemsSource = null;
-        LibraryBrowserListView.ItemsSource = _libraryFolders;
+        LibraryBrowserListView.ItemsSource = BuildFolderBrowserItems(_libraryFolders);
     }
 
     private void ShowTrackBrowser(string title, IEnumerable<LibraryTrack> tracks)
@@ -2422,7 +2940,7 @@ public sealed partial class MainWindow : Window
         LibraryBrowserTitleTextBlock.Text = title;
         LibraryBrowserSubtitleTextBlock.Text = $"{visibleTracks.Count} pistas";
         LibraryBrowserListView.ItemsSource = null;
-        LibraryBrowserListView.ItemsSource = visibleTracks;
+        LibraryBrowserListView.ItemsSource = BuildTrackBrowserItems(visibleTracks);
     }
 
     private async Task OpenIsoImageAsync(string isoPath)
@@ -2582,7 +3100,53 @@ public sealed partial class MainWindow : Window
             ? $"{filtered.Count} pistas"
             : $"{filtered.Count} resultados";
         LibraryBrowserListView.ItemsSource = null;
-        LibraryBrowserListView.ItemsSource = filtered;
+        LibraryBrowserListView.ItemsSource = BuildTrackBrowserItems(filtered);
+    }
+
+    private static List<LibraryBrowserItem> BuildFolderBrowserItems(IEnumerable<string> folders)
+    {
+        return folders
+            .OrderBy(folder => folder, StringComparer.CurrentCultureIgnoreCase)
+            .Select(folder => LibraryBrowserItem.ForFolder(folder))
+            .ToList();
+    }
+
+    private static List<LibraryBrowserItem> BuildTrackBrowserItems(IEnumerable<LibraryTrack> tracks)
+    {
+        var items = new List<LibraryBrowserItem>();
+        string? currentHeader = null;
+        foreach (var track in tracks.OrderBy(track => GetTrackGroupHeader(track), StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(track => track.Title, StringComparer.CurrentCultureIgnoreCase))
+        {
+            var header = GetTrackGroupHeader(track);
+            if (!string.Equals(header, currentHeader, StringComparison.CurrentCultureIgnoreCase))
+            {
+                items.Add(LibraryBrowserItem.ForHeader(header));
+                currentHeader = header;
+            }
+
+            items.Add(LibraryBrowserItem.ForTrack(track));
+        }
+
+        return items;
+    }
+
+    private static string GetTrackGroupHeader(LibraryTrack track)
+    {
+        if (track.Path.StartsWith("cue://", StringComparison.OrdinalIgnoreCase) ||
+            track.Path.StartsWith("iso://", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"— {Path.GetFileNameWithoutExtension(track.Folder)} —";
+        }
+
+        var folderName = Path.GetFileName(Path.GetDirectoryName(track.Path) ?? track.Folder);
+        if (!string.IsNullOrWhiteSpace(folderName))
+        {
+            return $"— {folderName} —";
+        }
+
+        var first = track.Title.FirstOrDefault(char.IsLetterOrDigit);
+        return first == default ? "— # —" : $"— {char.ToUpperInvariant(first)} —";
     }
 
     private void LoadTrack(string filePath)
@@ -2595,8 +3159,10 @@ public sealed partial class MainWindow : Window
             CodecTextBlock.Text = $"CUE {Path.GetExtension(cueEntry.AudioPath).TrimStart('.').ToUpperInvariant()}";
             TransportBadgeTextBlock.Text = "CARGADO";
             UpdateNowPlayingVisuals(cueEntry.AudioPath);
+            ApplySignalMetadataForTrack(filePath);
             UpdatePlaybackAvailabilityV2();
             UpdateSignalChain();
+            RefreshAntiFakeReport(showStatus: false);
             return;
         }
 
@@ -2607,8 +3173,10 @@ public sealed partial class MainWindow : Window
             CodecTextBlock.Text = $"ISO {isoEntry.Extension.TrimStart('.').ToUpperInvariant()}";
             TransportBadgeTextBlock.Text = "CARGADO";
             UpdateNowPlayingVisuals(isoEntry.IsoPath);
+            ApplySignalMetadataForTrack(filePath);
             UpdatePlaybackAvailabilityV2();
             UpdateSignalChain();
+            RefreshAntiFakeReport(showStatus: false);
             return;
         }
 
@@ -2617,8 +3185,10 @@ public sealed partial class MainWindow : Window
         CodecTextBlock.Text = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant();
         TransportBadgeTextBlock.Text = "CARGADO";
         UpdateNowPlayingVisuals(filePath);
+        ApplySignalMetadataForTrack(filePath);
         UpdatePlaybackAvailabilityV2();
         UpdateSignalChain();
+        RefreshAntiFakeReport(showStatus: false);
     }
 
     private async Task PlayNextTrackAsync(bool manual)
@@ -2759,7 +3329,7 @@ public sealed partial class MainWindow : Window
             }
 
             StatusInfoBar.Severity = InfoBarSeverity.Warning;
-            StatusInfoBar.Message = "DSD nativo no disponible. Streaming DSD -> PCM en RAM para Realtek/Windows, sin cache en disco.";
+            StatusInfoBar.Message = GetDsdPcmFallbackMessage();
             TransportBadgeTextBlock.Text = "DSD -> PCM";
             _vuUsesLiveLevel = true;
             _vuUsesAnalyzer = false;
@@ -2793,7 +3363,7 @@ public sealed partial class MainWindow : Window
         _fallbackMediaPlayer.Play();
         _usingFallbackPlayer = true;
         StartVuMeter();
-        OutputPathTextBlock.Text = DsdExtensions.Contains(Path.GetExtension(filePath)) ? "DSD en RAM" : "Fallback de Windows";
+        OutputPathTextBlock.Text = DsdExtensions.Contains(Path.GetExtension(filePath)) ? $"DSD->PCM {GetSelectedOutputLabel()}" : "Fallback de Windows";
         if (DsdExtensions.Contains(Path.GetExtension(filePath)))
         {
             SampleRateTextBlock.Text = "88.2 kHz";
@@ -2983,6 +3553,14 @@ public sealed partial class MainWindow : Window
             : $"{selectedDevice.KindLabel} compartido";
         ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-perfect" : "Windows max";
         StatusInfoBar.Severity = selectedDevice.IsLikelyDac || selectedDevice.IsUsb ? InfoBarSeverity.Success : InfoBarSeverity.Informational;
+        if (selectedDevice.IsKnownZishanZ2)
+        {
+            StatusInfoBar.Message = ExclusiveModeToggle.IsOn
+                ? "ZiShan Z2 detectado como DAC USB. Zenith usara WASAPI exclusivo; si Windows solo expone 16-bit/48 kHz, DSD nativo por USB no estara disponible y conviene usar DSD->PCM o reproducir DSD desde microSD."
+                : "ZiShan Z2 detectado como DAC USB. En modo compartido Windows puede limitarlo a 16-bit/48 kHz.";
+            return;
+        }
+
         StatusInfoBar.Message = ExclusiveModeToggle.IsOn
             ? $"Salida seleccionada: {selectedDevice.Name}. Zenith intentará WASAPI exclusivo si el backend nativo está disponible."
             : $"Salida seleccionada: {selectedDevice.Name}. Windows negociara la mejor calidad compatible.";
@@ -2997,6 +3575,33 @@ public sealed partial class MainWindow : Window
     private OutputDeviceOption? GetSelectedOutputDevice()
     {
         return OutputDeviceComboBox?.SelectedItem as OutputDeviceOption;
+    }
+
+    private string GetSelectedOutputLabel()
+    {
+        var selectedDevice = GetSelectedOutputDevice();
+        if (selectedDevice is null || selectedDevice.IsSystemDefault)
+        {
+            return "Windows";
+        }
+
+        return selectedDevice.IsKnownZishanZ2 ? "ZiShan Z2" : selectedDevice.KindLabel;
+    }
+
+    private string GetDsdPcmFallbackMessage()
+    {
+        var selectedDevice = GetSelectedOutputDevice();
+        if (selectedDevice?.IsKnownZishanZ2 == true)
+        {
+            return "ZiShan Z2 detectado. DSD nativo por USB no esta disponible en esta cadena; Zenith convertira DSD a PCM 88.2 kHz y reproducira por el ZiShan.";
+        }
+
+        if (selectedDevice is not null && !selectedDevice.IsSystemDefault)
+        {
+            return $"Salida seleccionada: {selectedDevice.Name}. DSD nativo no esta disponible; Zenith convertira DSD a PCM 88.2 kHz para reproducir por Windows.";
+        }
+
+        return "DSD nativo no disponible. Zenith convertira DSD a PCM 88.2 kHz y reproducira por Windows.";
     }
 
     private void ShowNativeDsdMissingAlert(AudioBackend backend)
@@ -3067,8 +3672,13 @@ public sealed partial class MainWindow : Window
             PreferredFormatComboBox.SelectedIndex = 2;
             ExclusiveModeToggle.IsOn = false;
             ModeTextBlock.Text = canConvertDsd ? "DSD a PCM" : "DSD nativo";
-            OutputPathTextBlock.Text = canConvertDsd ? "PCM Realtek/Windows" : "DLL nativas faltantes";
+            OutputPathTextBlock.Text = canConvertDsd ? $"PCM {GetSelectedOutputLabel()}" : "DLL nativas faltantes";
             StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            if (canConvertDsd)
+            {
+                StatusInfoBar.Message = GetDsdPcmFallbackMessage();
+                return;
+            }
             StatusInfoBar.Message = canConvertDsd
                 ? "No hay DAC/librerías nativas. Zenith convertirá DSF a PCM 88.2 kHz y reproducirá por Windows/Realtek."
                 : GetNativeDsdMissingMessage(backend);
@@ -3142,8 +3752,13 @@ public sealed partial class MainWindow : Window
             PreferredFormatComboBox.SelectedIndex = 2;
             ExclusiveModeToggle.IsOn = false;
             ModeTextBlock.Text = canConvertDsd ? "DSD a PCM" : "DSD nativo";
-            OutputPathTextBlock.Text = canConvertDsd ? "PCM Realtek/Windows" : "DLL nativas faltantes";
+            OutputPathTextBlock.Text = canConvertDsd ? $"PCM {GetSelectedOutputLabel()}" : "DLL nativas faltantes";
             StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            if (canConvertDsd)
+            {
+                StatusInfoBar.Message = GetDsdPcmFallbackMessage();
+                return;
+            }
             StatusInfoBar.Message = canConvertDsd
                 ? "No hay DAC/librerías nativas. Zenith convertirá DSF a PCM 88.2 kHz y reproducirá por Windows/Realtek."
                 : GetNativeDsdMissingMessage(backend);
@@ -3287,19 +3902,29 @@ public sealed partial class MainWindow : Window
 
         public string KindLabel => IsSystemDefault
             ? "Windows"
+            : IsKnownZishanZ2 ? "ZiShan Z2 DAC"
             : IsLikelyDac ? "DAC"
             : IsUsb ? "USB"
             : "WASAPI";
 
+        public bool IsKnownZishanZ2 => IsZishanZ2Endpoint(Name, Id);
+
         public static OutputDeviceOption FromDevice(DeviceInformation device)
         {
             var name = string.IsNullOrWhiteSpace(device.Name) ? "Dispositivo de salida de audio" : device.Name;
+            var propertyText = GetDevicePropertyText(device);
             var normalizedName = name.ToLowerInvariant();
-            var normalizedId = device.Id.ToLowerInvariant();
-            var isUsb = normalizedName.Contains("usb", StringComparison.Ordinal) || normalizedId.Contains("usb", StringComparison.Ordinal);
+            var normalizedId = $"{device.Id} {propertyText}".ToLowerInvariant();
+            var isKnownZishanZ2 = IsZishanZ2Endpoint(name, normalizedId);
+            var isUsb = isKnownZishanZ2 ||
+                normalizedName.Contains("usb", StringComparison.Ordinal) ||
+                normalizedId.Contains("usb", StringComparison.Ordinal);
             var isLikelyDac =
+                isKnownZishanZ2 ||
                 normalizedName.Contains("dac", StringComparison.Ordinal) ||
                 normalizedName.Contains("asio", StringComparison.Ordinal) ||
+                normalizedName.Contains("hifi", StringComparison.Ordinal) ||
+                normalizedName.Contains("hi-fi", StringComparison.Ordinal) ||
                 normalizedName.Contains("ifi", StringComparison.Ordinal) ||
                 normalizedName.Contains("topping", StringComparison.Ordinal) ||
                 normalizedName.Contains("fiio", StringComparison.Ordinal) ||
@@ -3311,13 +3936,146 @@ public sealed partial class MainWindow : Window
             return new OutputDeviceOption(name, device.Id, device, false, isUsb, isLikelyDac);
         }
 
+        private static string GetDevicePropertyText(DeviceInformation device)
+        {
+            return string.Join(
+                " ",
+                device.Properties.Values.Select(value => value switch
+                {
+                    null => string.Empty,
+                    string[] values => string.Join(" ", values),
+                    _ => value.ToString() ?? string.Empty
+                }));
+        }
+
+        private static bool IsZishanZ2Endpoint(string name, string id)
+        {
+            var combined = $"{name} {id}".ToLowerInvariant();
+            return combined.Contains("zishan", StringComparison.Ordinal) ||
+                combined.Contains("vid_0483&pid_5730", StringComparison.Ordinal) ||
+                combined.Contains("23db11b9-b60c-462d-9496-47342b9e6ec1", StringComparison.Ordinal) ||
+                (combined.Contains("z2", StringComparison.Ordinal) &&
+                    combined.Contains("hifi", StringComparison.Ordinal) &&
+                    combined.Contains("player", StringComparison.Ordinal));
+        }
+
         public override string ToString()
         {
             return IsSystemDefault ? Name : $"{Name}  |  {KindLabel}";
         }
     }
 
-    private sealed record LibraryTrack(string Title, string Format, string Extension, string Path, string Folder)
+    public sealed record LibraryBrowserItem(
+        string HeaderText,
+        Visibility HeaderVisibility,
+        Visibility TrackVisibility,
+        string DisplayTitle,
+        string SubTitle,
+        string BadgeText,
+        Brush BadgeBackground,
+        Brush BadgeBorderBrush,
+        Brush BadgeForeground,
+        bool IsHeader,
+        LibraryTrack? Track,
+        string? FolderPath)
+    {
+        public static LibraryBrowserItem ForHeader(string header) => new(
+            header,
+            Visibility.Visible,
+            Visibility.Collapsed,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0)),
+            new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0)),
+            new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 124, 158, 188)),
+            true,
+            null,
+            null);
+
+        public static LibraryBrowserItem ForFolder(string folderPath)
+        {
+            var title = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                title = folderPath;
+            }
+
+            return new LibraryBrowserItem(
+                string.Empty,
+                Visibility.Collapsed,
+                Visibility.Visible,
+                title,
+                folderPath,
+                "DIR",
+                new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(78, 20, 42, 62)),
+                new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(118, 64, 122, 168)),
+                new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 210, 230, 244)),
+                false,
+                null,
+                folderPath);
+        }
+
+        public static LibraryBrowserItem ForTrack(LibraryTrack track)
+        {
+            var badge = GetBadgeStyle(track.Extension);
+            var album = Path.GetFileName(Path.GetDirectoryName(track.Path) ?? track.Folder);
+            return new LibraryBrowserItem(
+                string.Empty,
+                Visibility.Collapsed,
+                Visibility.Visible,
+                track.Title,
+                string.IsNullOrWhiteSpace(album) ? track.Format : album,
+                badge.Text,
+                badge.Background,
+                badge.Border,
+                badge.Foreground,
+                false,
+                track,
+                null);
+        }
+
+        private static (string Text, Brush Background, Brush Border, Brush Foreground) GetBadgeStyle(string extension)
+        {
+            var normalized = extension.ToLowerInvariant();
+            var text = normalized.TrimStart('.').ToUpperInvariant();
+
+            if (normalized is ".dsf" or ".dff" or ".iso")
+            {
+                return (
+                    text,
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(82, 20, 58, 142)),
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(150, 82, 150, 255)),
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 205, 226, 255)));
+            }
+
+            if (normalized is ".flac" or ".wav" or ".aiff" or ".aif" or ".alac" or ".mqa" or ".ape" or ".wv")
+            {
+                return (
+                    text,
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(78, 8, 74, 116)),
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(152, 64, 190, 255)),
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 198, 239, 255)));
+            }
+
+            if (normalized is ".mp3" or ".aac" or ".m4a" or ".ogg" or ".opus")
+            {
+                return (
+                    text,
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(76, 28, 42, 58)),
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(124, 92, 116, 144)),
+                    new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 206, 216, 226)));
+            }
+
+            return (
+                text,
+                new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(68, 24, 48, 70)),
+                new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(112, 82, 132, 170)),
+                new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 216, 230, 242)));
+        }
+    }
+
+    public sealed record LibraryTrack(string Title, string Format, string Extension, string Path, string Folder)
     {
         public override string ToString()
         {

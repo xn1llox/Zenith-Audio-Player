@@ -69,17 +69,24 @@ a {
   display: flex;
   font-size: 8.5pt;
   gap: 8px;
-  height: 11mm;
+  height: 8mm;
   justify-content: space-between;
   left: 16mm;
+  line-height: 1;
+  overflow: hidden;
+  padding: 0 1mm 1.2mm;
   position: fixed;
-  right: 16mm;
+  right: auto;
   top: 5mm;
+  width: 178mm;
   z-index: 10;
 }
 
 .page-header img {
-  height: 6mm;
+  display: block;
+  flex: 0 0 auto;
+  height: 5.2mm;
+  object-fit: contain;
   width: auto;
 }
 
@@ -88,10 +95,12 @@ a {
   display: flex;
   gap: 7px;
   letter-spacing: 0;
+  min-width: 0;
 }
 
 .page-header__version {
   color: #7b8794;
+  display: none;
 }
 
 .cover {
@@ -164,7 +173,7 @@ a {
 }
 
 .document {
-  padding-top: 8mm;
+  padding-top: 15mm;
 }
 
 #TOC {
