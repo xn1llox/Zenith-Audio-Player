@@ -48,15 +48,7 @@ public sealed class ZenithAiClient
                 content = message.Content
             }));
 
-        var payload = new
-        {
-            model = Settings.Model,
-            messages,
-            temperature = 0.45,
-            top_p = 0.9,
-            max_tokens = 1400,
-            stream = false
-        };
+        var payload = BuildPayload(Settings.Model, messages);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, Settings.Endpoint);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", NormalizeApiKey(Settings.ApiKey));
@@ -84,6 +76,31 @@ public sealed class ZenithAiClient
             "Si el usuario pregunta algo fuera de audio, redirige amablemente al tema musical o de reproduccion. " +
             "No inventes datos tecnicos; cuando no sepas algo, dilo y ofrece una forma de comprobarlo. Evita cortar frases o listas a medias. " +
             "Contexto actual del reproductor: " + audioContext;
+    }
+
+    private static Dictionary<string, object?> BuildPayload(string model, List<object> messages)
+    {
+        var isNemotron3 = model.Contains("nemotron-3", StringComparison.OrdinalIgnoreCase);
+        var payload = new Dictionary<string, object?>
+        {
+            ["model"] = model,
+            ["messages"] = messages,
+            ["temperature"] = isNemotron3 ? 1.0 : 0.45,
+            ["top_p"] = isNemotron3 ? 0.95 : 0.9,
+            ["max_tokens"] = isNemotron3 ? 8192 : 1400,
+            ["stream"] = false
+        };
+
+        if (isNemotron3)
+        {
+            payload["reasoning_budget"] = 4096;
+            payload["chat_template_kwargs"] = new Dictionary<string, object?>
+            {
+                ["enable_thinking"] = true
+            };
+        }
+
+        return payload;
     }
 
     private static string ExtractAssistantText(string json)

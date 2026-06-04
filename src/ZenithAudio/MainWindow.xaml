@@ -1408,7 +1408,7 @@
                                  TextWrapping="NoWrap" />
                         <TextBox x:Name="ZenithAiModelTextBox"
                                  Header="Modelo"
-                                 PlaceholderText="google/gemma-4-31b-it" />
+                                 PlaceholderText="nvidia/nemotron-3-super-120b-a12b" />
                         <PasswordBox x:Name="ZenithAiApiKeyBox"
                                      Header="API key"
                                      PlaceholderText="Pega aqui tu key" />

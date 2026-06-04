@@ -28,6 +28,8 @@ Zenith Audio Player es un reproductor de musica para Windows creado con C#, WinU
   - voces al frente
   - perfil automatico
 - Normalizacion de API key cuando se pega con prefijo `Bearer`.
+- Modelo NVIDIA NIM por defecto actualizado a `nvidia/nemotron-3-super-120b-a12b`.
+- Soporte de payload Nemotron 3 con `reasoning_budget` y `enable_thinking`.
 - Log local de diagnostico de ZenithAI sin guardar claves:
   `%LOCALAPPDATA%\ZenithAudio\zenithai.log`
 
@@ -65,6 +67,13 @@ ZenithAI es un asistente de audio integrado. Puede responder sobre:
 - recomendaciones de perfil tonal
 
 ZenithAI usa una API compatible con OpenAI Chat Completions. La configuracion se guarda por usuario en Windows. No se suben claves al repositorio.
+
+Default actual de NVIDIA NIM:
+
+- Endpoint: `https://integrate.api.nvidia.com/v1/chat/completions`
+- Modelo: `nvidia/nemotron-3-super-120b-a12b`
+- Modo de respuesta en la app: JSON completo, sin streaming SSE por ahora
+- Parametros Nemotron: `max_tokens=8192`, `reasoning_budget=4096`, `enable_thinking=true`
 
 ### Comandos locales de tono
 

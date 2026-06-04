@@ -6,11 +6,13 @@
 
 payload=$(cat <<'JSON'
 {
-  "model": "google/gemma-4-31b-it",
+  "model": "nvidia/nemotron-3-super-120b-a12b",
   "messages": [{"role":"user","content":""}],
   "temperature": 1,
   "top_p": 0.95,
-  "max_tokens": 480,
+  "max_tokens": 8192,
+  "reasoning_budget": 4096,
+  "chat_template_kwargs": {"enable_thinking": true},
   "stream": true
 }
 JSON

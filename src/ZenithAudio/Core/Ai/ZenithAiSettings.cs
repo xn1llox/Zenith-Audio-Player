@@ -13,7 +13,8 @@ public sealed record ZenithAiSettings(
 {
     public const string DefaultProvider = "NVIDIA NIM";
     public const string DefaultEndpoint = "https://integrate.api.nvidia.com/v1/chat/completions";
-    public const string DefaultModel = "google/gemma-4-31b-it";
+    public const string DefaultModel = "nvidia/nemotron-3-super-120b-a12b";
+    private const string LegacyDefaultModel = "google/gemma-4-31b-it";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -43,7 +44,8 @@ public sealed record ZenithAiSettings(
                 var saved = JsonSerializer.Deserialize<ZenithAiSettings>(File.ReadAllText(UserSettingsPath), JsonOptions);
                 if (saved is not null)
                 {
-                    settings = Merge(settings, saved with { ApiKey = UnprotectApiKey(saved.ApiKey) });
+                    var savedSettings = MigrateLegacyDefaultModel(saved with { ApiKey = UnprotectApiKey(saved.ApiKey) });
+                    settings = Merge(settings, savedSettings);
                 }
             }
             catch (JsonException)
@@ -85,6 +87,19 @@ public sealed record ZenithAiSettings(
             string.IsNullOrWhiteSpace(overrideSettings.Endpoint) ? baseSettings.Endpoint : overrideSettings.Endpoint,
             string.IsNullOrWhiteSpace(overrideSettings.Model) ? baseSettings.Model : overrideSettings.Model,
             string.IsNullOrWhiteSpace(overrideSettings.ApiKey) ? baseSettings.ApiKey : overrideSettings.ApiKey);
+    }
+
+    private static ZenithAiSettings MigrateLegacyDefaultModel(ZenithAiSettings settings)
+    {
+        var isDefaultNvidiaProvider = settings.Provider.Equals(DefaultProvider, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(settings.Provider);
+        var isDefaultEndpoint = settings.Endpoint.Equals(DefaultEndpoint, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(settings.Endpoint);
+        var isLegacyDefaultModel = settings.Model.Equals(LegacyDefaultModel, StringComparison.OrdinalIgnoreCase);
+
+        return isDefaultNvidiaProvider && isDefaultEndpoint && isLegacyDefaultModel
+            ? settings with { Model = DefaultModel }
+            : settings;
     }
 
     private static ZenithAiSettings LoadBundledDefaults()

@@ -1,6 +1,6 @@
 {
   "Provider": "NVIDIA NIM",
   "Endpoint": "https://integrate.api.nvidia.com/v1/chat/completions",
-  "Model": "google/gemma-4-31b-it",
+  "Model": "nvidia/nemotron-3-super-120b-a12b",
   "ApiKey": ""
 }
