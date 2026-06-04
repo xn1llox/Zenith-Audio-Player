@@ -757,7 +757,7 @@ public sealed partial class MainWindow : Window
         _zenithAiCancelRequestedByUser = false;
         _zenithAiRequestCancellation = new CancellationTokenSource();
 
-        using var timeoutCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        using var timeoutCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(180));
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _zenithAiRequestCancellation.Token,
             timeoutCancellation.Token);
@@ -785,7 +785,7 @@ public sealed partial class MainWindow : Window
             var message = _zenithAiCancelRequestedByUser
                 ? "Consulta cancelada por el usuario."
                 : timeoutCancellation.IsCancellationRequested
-                    ? "La API no respondio dentro de 120 segundos. Prueba otro modelo de NVIDIA NIM, reduce la pregunta o revisa el endpoint."
+                    ? "La API no respondio dentro de 180 segundos. Prueba otro modelo de NVIDIA NIM, reduce la pregunta o revisa el endpoint."
                     : "Consulta cancelada al cerrar ZenithAI.";
             _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", message));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
@@ -857,7 +857,7 @@ public sealed partial class MainWindow : Window
         {
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
             var elapsed = (int)Math.Max(1, (DateTimeOffset.Now - startedAt).TotalSeconds);
-            ZenithAiStatusTextBlock.Text = $"Esperando respuesta de {provider} ({model})... {elapsed}s / 120s";
+            ZenithAiStatusTextBlock.Text = $"Esperando respuesta de {provider} ({model})... {elapsed}s / 180s";
         }
     }
 
