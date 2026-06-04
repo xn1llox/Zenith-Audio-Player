@@ -227,7 +227,7 @@ Si quieres colaborar con el proyecto y ayudar a seguir sacando actualizaciones:
 - BTC: `bc1qqqwtvasyk2j0jdja6fyhkwg84qm53uwz4935d2`
 - ETH: `0x0Ce533373C02D5069f193AF0a6e325bdAC8e8F4D`
 - LTC: `ltc1qmac3zrd49n552c5xjpwm5n2p0d5kyydy5z6fah`
-- PayPal: `felipeespinozaguajardo@gmail.com`
+- Ko-Fi: `https://ko-fi.com/xn1llox`
 
 ## Licencia
 
