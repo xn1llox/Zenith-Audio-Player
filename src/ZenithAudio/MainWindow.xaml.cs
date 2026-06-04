@@ -574,7 +574,8 @@ public sealed partial class MainWindow : Window
 
     private async void ZenithAiButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialogWidth = Math.Clamp(AppWindow.Size.Width - 180, 520, 860);
+        var dialogWidth = Math.Clamp(AppWindow.Size.Width - 220, 640, 920);
+        var contentWidth = dialogWidth - 36;
         var transcriptHeight = Math.Clamp(AppWindow.Size.Height - 430, 340, 620);
         var glassBrush = new AcrylicBrush
         {
@@ -594,14 +595,14 @@ public sealed partial class MainWindow : Window
         {
             Content = transcriptPanel,
             Height = transcriptHeight,
-            Width = dialogWidth,
+            Width = contentWidth,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollMode = ScrollMode.Enabled,
             HorizontalScrollMode = ScrollMode.Disabled,
             ZoomMode = ZoomMode.Disabled
         };
-        RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
+        RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
 
         var questionTextBox = new TextBox
         {
@@ -610,7 +611,7 @@ public sealed partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap,
             MinHeight = 54,
             MaxHeight = 110,
-            Width = dialogWidth
+            Width = contentWidth
         };
 
         var statusTextBlock = new TextBlock
@@ -620,7 +621,7 @@ public sealed partial class MainWindow : Window
                 : "Falta API key. Abre Ajustes de API para configurar NVIDIA NIM u otra API compatible.",
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             TextWrapping = TextWrapping.Wrap,
-            MaxWidth = dialogWidth
+            MaxWidth = contentWidth
         };
 
         var providerTextBox = new TextBox
@@ -674,7 +675,7 @@ public sealed partial class MainWindow : Window
             Text = "Configura NVIDIA NIM u otra API compatible con OpenAI Chat Completions. Se guarda localmente por usuario.",
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             TextWrapping = TextWrapping.Wrap,
-            MaxWidth = dialogWidth
+            MaxWidth = contentWidth
         });
         apiSettingsPanel.Children.Add(providerTextBox);
         apiSettingsPanel.Children.Add(endpointTextBox);
@@ -712,7 +713,7 @@ public sealed partial class MainWindow : Window
 
         var contentPanel = new Grid
         {
-            Width = dialogWidth
+            Width = contentWidth
         };
         contentPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         contentPanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -727,7 +728,7 @@ public sealed partial class MainWindow : Window
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 10),
-            MaxWidth = dialogWidth
+            MaxWidth = contentWidth
         };
         contentPanel.Children.Add(introTextBlock);
 
@@ -751,6 +752,7 @@ public sealed partial class MainWindow : Window
 
         var glassPanel = new Border
         {
+            Width = dialogWidth,
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(16),
             Background = glassBrush,
@@ -766,13 +768,17 @@ public sealed partial class MainWindow : Window
             Title = "ZenithAI (BETA)",
             Content = glassPanel,
             CloseButtonText = "Cerrar",
-            DefaultButton = ContentDialogButton.None
+            DefaultButton = ContentDialogButton.None,
+            MinWidth = dialogWidth + 52,
+            MaxWidth = dialogWidth + 52
         };
+        dialog.Resources["ContentDialogMinWidth"] = dialogWidth + 52;
+        dialog.Resources["ContentDialogMaxWidth"] = dialogWidth + 52;
 
         clearButton.Click += (_, _) =>
         {
             _zenithAiMessages.Clear();
-            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
+            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
             ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
             statusTextBlock.Text = "Historial limpio. Pregunta algo de audio.";
         };
@@ -827,7 +833,7 @@ public sealed partial class MainWindow : Window
 
             questionTextBox.Text = string.Empty;
             _zenithAiMessages.Add(new ZenithAiChatMessage("user", question));
-            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth, "ZenithAI está pensando...");
+            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth, "ZenithAI está pensando...");
             ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
             sendButton.IsEnabled = false;
             clearButton.IsEnabled = false;
@@ -841,14 +847,14 @@ public sealed partial class MainWindow : Window
                     cancellationTokenSource.Token);
 
                 _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", response));
-                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
+                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
                 ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
                 statusTextBlock.Text = "Listo. ZenithAI no usa modelos locales ni carga el CPU/GPU para inferencia.";
             }
             catch (Exception ex)
             {
                 _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", $"No pude conectar con NVIDIA NIM: {ex.Message}"));
-                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
+                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
                 ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
                 statusTextBlock.Text = "Revisa conexion, API key o disponibilidad del modelo NVIDIA NIM.";
             }
