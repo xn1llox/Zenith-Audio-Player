@@ -339,7 +339,7 @@ img {
 
 @media print {
   .page-header {
-    position: fixed;
+    display: none;
   }
 }
 
