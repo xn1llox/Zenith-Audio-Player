@@ -701,6 +701,15 @@ public sealed partial class MainWindow : Window
 
         ZenithAiQuestionTextBox.Text = string.Empty;
         _zenithAiMessages.Add(new ZenithAiChatMessage("user", question));
+
+        if (TryHandleZenithAiToneCommand(question, out var localResponse))
+        {
+            _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", localResponse));
+            RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
+            ZenithAiStatusTextBlock.Text = "Perfil tonal aplicado localmente. No se uso la nube para este ajuste.";
+            return;
+        }
+
         RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth(), "ZenithAI esta pensando...");
         ZenithAiSendButton.IsEnabled = false;
         ZenithAiCancelButton.IsEnabled = true;
@@ -1079,6 +1088,269 @@ public sealed partial class MainWindow : Window
         StatusInfoBar.Message = _toneSettings.IsActive
             ? "Control de tono activo en RAM y en tiempo real para DSF RAM stream. FLAC/MP3 por Windows requieren DSP Media Foundation o EQ de MPV/BASS."
             : "Control de tono en bypass: salida plana.";
+    }
+
+    private bool TryHandleZenithAiToneCommand(string question, out string response)
+    {
+        response = string.Empty;
+        var normalized = NormalizeCommandText(question);
+        var wantsToneAction =
+            ContainsAny(normalized, "ajusta", "ajustar", "cambia", "cambiar", "modifica", "modificar", "pon", "poner", "quiero", "dame", "activa", "activar", "perfil", "sonido", "audio", "eq", "tono") &&
+            ContainsAny(normalized, "puro", "plano", "natural", "bit perfect", "grave", "graves", "bajo", "bajos", "subgrave", "agudo", "agudos", "brillo", "aire", "detalle", "analitico", "calido", "voces", "voz", "rock", "jazz", "clasica", "automatico", "auto", "musica", "pista", "cancion", "recomendado", "mejor");
+
+        if (!wantsToneAction)
+        {
+            return false;
+        }
+
+        var profile = ResolveZenithAiToneProfile(normalized);
+        ApplyToneProfile(
+            profile.Name,
+            profile.EqEnabled,
+            profile.DspBypassed,
+            profile.PreampDb,
+            profile.SubBassDb,
+            profile.PresenceDb,
+            profile.AirDb);
+
+        response =
+            $"Perfil aplicado: {profile.Name}\n\n" +
+            $"{profile.Description}\n\n" +
+            $"Ajustes: Preamp {FormatDb(profile.PreampDb)}, Subgraves {FormatDb(profile.SubBassDb)}, Presencia {FormatDb(profile.PresenceDb)}, Aire {FormatDb(profile.AirDb)}. " +
+            $"DSP: {(profile.DspBypassed ? "bypass" : "activo")}.\n\n" +
+            "Puedes pedirme: audio mas puro, mas graves, menos graves, mas agudos, mas calido, mas detalle, voces al frente o perfil automatico.";
+        return true;
+    }
+
+    private ZenithAiToneProfile ResolveZenithAiToneProfile(string normalizedQuestion)
+    {
+        if (ContainsAny(normalizedQuestion, "puro", "plano", "natural", "bit perfect", "sin dsp", "bypass"))
+        {
+            return new ZenithAiToneProfile(
+                "Pureza bit-perfect",
+                "Dejo el control de tono en bypass para priorizar una salida plana y transparente.",
+                false,
+                true,
+                0,
+                0,
+                0,
+                0);
+        }
+
+        if (ContainsAny(normalizedQuestion, "menos graves", "menos bajos", "bajar graves", "reducir graves"))
+        {
+            return new ZenithAiToneProfile(
+                "Graves contenidos",
+                "Reduzco subgraves para limpiar mezcla, sala cargada o audifonos con exceso de bajo.",
+                true,
+                false,
+                -1,
+                -2.5,
+                0.5,
+                0.5);
+        }
+
+        if (ContainsAny(normalizedQuestion, "grave", "graves", "bajo", "bajos", "subgrave", "subgraves"))
+        {
+            return new ZenithAiToneProfile(
+                "Graves audifilos",
+                "Subo el fundamento grave con preamp negativo para evitar clipping digital.",
+                true,
+                false,
+                -3,
+                3,
+                0.5,
+                0.5);
+        }
+
+        if (ContainsAny(normalizedQuestion, "menos agudos", "menos brillo", "suavizar agudos", "bajar agudos"))
+        {
+            return new ZenithAiToneProfile(
+                "Agudos suaves",
+                "Reduzco presencia y aire para controlar sibilancia o grabaciones brillantes.",
+                true,
+                false,
+                -1,
+                0.5,
+                -1,
+                -2.5);
+        }
+
+        if (ContainsAny(normalizedQuestion, "agudo", "agudos", "brillo", "aire"))
+        {
+            return new ZenithAiToneProfile(
+                "Aire y extension",
+                "Realzo presencia y aire para dar mas definicion sin tocar demasiado el grave.",
+                true,
+                false,
+                -2.5,
+                0,
+                1.5,
+                3);
+        }
+
+        if (ContainsAny(normalizedQuestion, "voz", "voces", "vocal", "cantante"))
+        {
+            return new ZenithAiToneProfile(
+                "Voces al frente",
+                "Empujo la zona de presencia para que voces, guitarras y solistas queden mas legibles.",
+                true,
+                false,
+                -2,
+                0.5,
+                2.5,
+                1);
+        }
+
+        if (ContainsAny(normalizedQuestion, "calido", "calida", "suave", "relajado"))
+        {
+            return new ZenithAiToneProfile(
+                "Calidez analogica",
+                "Aumento levemente el cuerpo y bajo el aire para una escucha mas relajada.",
+                true,
+                false,
+                -2,
+                2,
+                -0.5,
+                -1);
+        }
+
+        if (ContainsAny(normalizedQuestion, "detalle", "analitico", "analitica", "resolucion", "separacion"))
+        {
+            return new ZenithAiToneProfile(
+                "Detalle analitico",
+                "Aumento presencia y aire con margen de preamp para mejorar lectura de microdetalle.",
+                true,
+                false,
+                -2.5,
+                0,
+                1.5,
+                2.5);
+        }
+
+        if (ContainsAny(normalizedQuestion, "rock", "metal"))
+        {
+            return new ZenithAiToneProfile(
+                "Rock dinamico",
+                "Refuerzo pegada y presencia para bateria, bajo y guitarras sin saturar la salida.",
+                true,
+                false,
+                -3,
+                2.5,
+                1.5,
+                1);
+        }
+
+        if (ContainsAny(normalizedQuestion, "jazz", "acustico", "acustica"))
+        {
+            return new ZenithAiToneProfile(
+                "Jazz acustico",
+                "Perfil sutil para contrabajo, metales y sala, manteniendo una presentacion natural.",
+                true,
+                false,
+                -1.5,
+                1,
+                1,
+                1.5);
+        }
+
+        if (ContainsAny(normalizedQuestion, "clasica", "orquesta", "sinfonica", "piano"))
+        {
+            return new ZenithAiToneProfile(
+                "Escena clasica",
+                "Ajuste leve para aire y escena, con minimo procesamiento.",
+                true,
+                false,
+                -1,
+                0.5,
+                0.5,
+                1.5);
+        }
+
+        return ResolveAutomaticToneProfile();
+    }
+
+    private ZenithAiToneProfile ResolveAutomaticToneProfile()
+    {
+        var extension = Path.GetExtension(GetEffectivePlaybackPath(_currentFilePath ?? string.Empty)).ToLowerInvariant();
+
+        if (DsdExtensions.Contains(extension))
+        {
+            return new ZenithAiToneProfile(
+                "Automatico DSD puro",
+                "La pista actual es DSD/DSF/DFF/ISO. Priorizo bypass DSP para conservar la lectura mas transparente posible.",
+                false,
+                true,
+                0,
+                0,
+                0,
+                0);
+        }
+
+        if (extension is ".mp3" or ".aac" or ".m4a" or ".ogg" or ".opus")
+        {
+            return new ZenithAiToneProfile(
+                "Automatico con recuperacion suave",
+                "La pista parece comprimida o con perdida. Uso un realce moderado de presencia y aire, con preamp seguro.",
+                true,
+                false,
+                -2.5,
+                1,
+                1,
+                1.5);
+        }
+
+        return new ZenithAiToneProfile(
+            "Automatico Hi-Res neutral",
+            "Uso un ajuste muy leve para mantener caracter natural y evitar alterar demasiado el master.",
+            true,
+            false,
+            -1,
+            0.5,
+            0.5,
+            0.75);
+    }
+
+    private void ApplyToneProfile(
+        string profileName,
+        bool eqEnabled,
+        bool dspBypassed,
+        double preampDb,
+        double subBassDb,
+        double presenceDb,
+        double airDb)
+    {
+        EqToggleButton.IsChecked = eqEnabled;
+        DspBypassToggleButton.IsChecked = dspBypassed;
+        PreampSlider.Value = preampDb;
+        SubBassSlider.Value = subBassDb;
+        PresenceSlider.Value = presenceDb;
+        AirSlider.Value = airDb;
+        EqPresetComboBox.SelectedIndex = 0;
+        UpdateToneControlState(showStatus: true);
+        StatusInfoBar.Severity = dspBypassed ? InfoBarSeverity.Success : InfoBarSeverity.Informational;
+        StatusInfoBar.Message = $"ZenithAI aplico el perfil tonal: {profileName}.";
+    }
+
+    private static string NormalizeCommandText(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder(normalized.Length);
+
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
+            {
+                builder.Append(char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.ToString().Normalize(NormalizationForm.FormC);
+    }
+
+    private static bool ContainsAny(string text, params string[] terms)
+    {
+        return terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     private void PlaybackProgressSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -4181,6 +4453,16 @@ public sealed partial class MainWindow : Window
             return $"{Title}  |  {Format}";
         }
     }
+
+    private sealed record ZenithAiToneProfile(
+        string Name,
+        string Description,
+        bool EqEnabled,
+        bool DspBypassed,
+        double PreampDb,
+        double SubBassDb,
+        double PresenceDb,
+        double AirDb);
 
     private sealed record SyncedLyricLine(TimeSpan Time, string Text);
 }
