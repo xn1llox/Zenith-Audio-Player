@@ -574,8 +574,8 @@ public sealed partial class MainWindow : Window
 
     private async void ZenithAiButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialogWidth = Math.Clamp(AppWindow.Size.Width - 180, 420, 760);
-        var transcriptHeight = Math.Clamp(AppWindow.Size.Height - 390, 280, 520);
+        var dialogWidth = Math.Clamp(AppWindow.Size.Width - 180, 520, 860);
+        var transcriptHeight = Math.Clamp(AppWindow.Size.Height - 430, 340, 620);
         var glassBrush = new AcrylicBrush
         {
             TintColor = Windows.UI.Color.FromArgb(255, 18, 30, 42),
@@ -584,23 +584,24 @@ public sealed partial class MainWindow : Window
             FallbackColor = Windows.UI.Color.FromArgb(255, 24, 28, 36)
         };
 
-        var transcriptTextBlock = new TextBlock
+        var transcriptPanel = new StackPanel
         {
-            Text = FormatZenithAiTranscript(),
-            TextWrapping = TextWrapping.Wrap,
-            IsTextSelectionEnabled = true,
-            Width = dialogWidth - 42,
-            HorizontalAlignment = HorizontalAlignment.Stretch
+            Spacing = 14,
+            Padding = new Thickness(2, 2, 10, 2)
         };
 
         var transcriptScrollViewer = new ScrollViewer
         {
-            Content = transcriptTextBlock,
+            Content = transcriptPanel,
             Height = transcriptHeight,
             Width = dialogWidth,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollMode = ScrollMode.Enabled,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            ZoomMode = ZoomMode.Disabled
         };
+        RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
 
         var questionTextBox = new TextBox
         {
@@ -609,13 +610,13 @@ public sealed partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap,
             MinHeight = 54,
             MaxHeight = 110,
-            MaxWidth = dialogWidth
+            Width = dialogWidth
         };
 
         var statusTextBlock = new TextBlock
         {
             Text = _zenithAiClient.IsConfigured
-                ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenitAI (BETA) solo responde temas de audio."
+                ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
                 : "Falta API key. Abre Ajustes de API para configurar NVIDIA NIM u otra API compatible.",
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             TextWrapping = TextWrapping.Wrap,
@@ -762,7 +763,7 @@ public sealed partial class MainWindow : Window
         var dialog = new ContentDialog
         {
             XamlRoot = Content.XamlRoot,
-            Title = "ZenitAI (BETA)",
+            Title = "ZenithAI (BETA)",
             Content = glassPanel,
             CloseButtonText = "Cerrar",
             DefaultButton = ContentDialogButton.None
@@ -771,7 +772,7 @@ public sealed partial class MainWindow : Window
         clearButton.Click += (_, _) =>
         {
             _zenithAiMessages.Clear();
-            transcriptTextBlock.Text = FormatZenithAiTranscript();
+            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
             ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
             statusTextBlock.Text = "Historial limpio. Pregunta algo de audio.";
         };
@@ -783,7 +784,7 @@ public sealed partial class MainWindow : Window
                 : Visibility.Visible;
             configButton.Content = apiSettingsPanel.Visibility == Visibility.Visible ? "Ocultar config" : "Config";
             statusTextBlock.Text = _zenithAiClient.IsConfigured
-                ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenitAI (BETA) solo responde temas de audio."
+                ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
                 : "Falta API key. Usa Config para guardar NVIDIA NIM u otra API compatible.";
         };
 
@@ -826,7 +827,7 @@ public sealed partial class MainWindow : Window
 
             questionTextBox.Text = string.Empty;
             _zenithAiMessages.Add(new ZenithAiChatMessage("user", question));
-            transcriptTextBlock.Text = FormatZenithAiTranscript("ZenitAI está pensando...");
+            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth, "ZenithAI está pensando...");
             ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
             sendButton.IsEnabled = false;
             clearButton.IsEnabled = false;
@@ -840,14 +841,14 @@ public sealed partial class MainWindow : Window
                     cancellationTokenSource.Token);
 
                 _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", response));
-                transcriptTextBlock.Text = FormatZenithAiTranscript();
+                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
                 ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
-                statusTextBlock.Text = "Listo. ZenitAI no usa modelos locales ni carga el CPU/GPU para inferencia.";
+                statusTextBlock.Text = "Listo. ZenithAI no usa modelos locales ni carga el CPU/GPU para inferencia.";
             }
             catch (Exception ex)
             {
                 _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", $"No pude conectar con NVIDIA NIM: {ex.Message}"));
-                transcriptTextBlock.Text = FormatZenithAiTranscript();
+                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, dialogWidth);
                 ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
                 statusTextBlock.Text = "Revisa conexion, API key o disponibilidad del modelo NVIDIA NIM.";
             }
@@ -3803,29 +3804,103 @@ public sealed partial class MainWindow : Window
         return DsdModeComboBox?.SelectedIndex == 3;
     }
 
-    private string FormatZenithAiTranscript(string? pendingMessage = null)
+    private void RenderZenithAiTranscript(
+        StackPanel transcriptPanel,
+        ScrollViewer scrollViewer,
+        double dialogWidth,
+        string? pendingMessage = null)
     {
-        if (_zenithAiMessages.Count == 0 && pendingMessage is null)
+        transcriptPanel.Children.Clear();
+
+        if (_zenithAiMessages.Count == 0 && string.IsNullOrWhiteSpace(pendingMessage))
         {
-            return "ZenitAI (BETA) listo. Pregúntame por la pista actual, diferencias entre DSD/FLAC/PCM, historia de un álbum, configuración de Windows, DACs o escucha crítica.";
+            AddZenithAiBubble(
+                transcriptPanel,
+                "assistant",
+                "ZenithAI listo. Pregúntame por la pista actual, diferencias entre DSD/FLAC/PCM, historia de un álbum, configuración de Windows, DACs o escucha crítica.",
+                dialogWidth);
+            ScrollZenithAiTranscriptToEnd(scrollViewer);
+            return;
         }
 
-        var lines = _zenithAiMessages
-            .Select(message =>
-            {
-                var speaker = message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase)
-                    ? "ZenitAI"
-                    : "Tu";
-                return $"{speaker}: {message.Content}";
-            })
-            .ToList();
+        foreach (var message in _zenithAiMessages)
+        {
+            AddZenithAiBubble(transcriptPanel, message.Role, message.Content, dialogWidth);
+        }
 
         if (!string.IsNullOrWhiteSpace(pendingMessage))
         {
-            lines.Add(pendingMessage);
+            AddZenithAiBubble(transcriptPanel, "assistant", pendingMessage, dialogWidth, isPending: true);
         }
 
-        return string.Join($"{Environment.NewLine}{Environment.NewLine}", lines);
+        ScrollZenithAiTranscriptToEnd(scrollViewer);
+    }
+
+    private static void AddZenithAiBubble(
+        StackPanel transcriptPanel,
+        string role,
+        string content,
+        double dialogWidth,
+        bool isPending = false)
+    {
+        var isAssistant = role.Equals("assistant", StringComparison.OrdinalIgnoreCase);
+        var maxBubbleWidth = Math.Max(260, dialogWidth * 0.78);
+
+        var label = new TextBlock
+        {
+            Text = isAssistant ? "ZenithAI" : "Tú",
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(isAssistant
+                ? Microsoft.UI.ColorHelper.FromArgb(255, 146, 213, 255)
+                : Microsoft.UI.ColorHelper.FromArgb(255, 225, 232, 240))
+        };
+
+        var messageText = new TextBlock
+        {
+            Text = NormalizeZenithAiText(content),
+            TextWrapping = TextWrapping.WrapWholeWords,
+            IsTextSelectionEnabled = true,
+            FontSize = 14,
+            LineHeight = 21,
+            Foreground = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 245, 247, 250)),
+            MaxWidth = maxBubbleWidth
+        };
+
+        var stack = new StackPanel
+        {
+            Spacing = 6
+        };
+        stack.Children.Add(label);
+        stack.Children.Add(messageText);
+
+        var bubble = new Border
+        {
+            MaxWidth = maxBubbleWidth + 28,
+            Padding = new Thickness(14, 11, 14, 12),
+            CornerRadius = new CornerRadius(16),
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = isAssistant ? HorizontalAlignment.Left : HorizontalAlignment.Right,
+            Background = new SolidColorBrush(isAssistant
+                ? Microsoft.UI.ColorHelper.FromArgb(255, 18, 28, 42)
+                : Microsoft.UI.ColorHelper.FromArgb(255, 8, 77, 112)),
+            BorderBrush = new SolidColorBrush(isAssistant
+                ? Microsoft.UI.ColorHelper.FromArgb(160, 95, 191, 255)
+                : Microsoft.UI.ColorHelper.FromArgb(190, 38, 173, 228)),
+            Opacity = isPending ? 0.78 : 1,
+            Child = stack
+        };
+
+        transcriptPanel.Children.Add(bubble);
+    }
+
+    private static string NormalizeZenithAiText(string value)
+    {
+        return value
+            .Replace("**", string.Empty, StringComparison.Ordinal)
+            .Replace("### ", string.Empty, StringComparison.Ordinal)
+            .Replace("## ", string.Empty, StringComparison.Ordinal)
+            .Trim();
     }
 
     private void ScrollZenithAiTranscriptToEnd(ScrollViewer scrollViewer)
@@ -4085,3 +4160,5 @@ public sealed partial class MainWindow : Window
 
     private sealed record SyncedLyricLine(TimeSpan Time, string Text);
 }
+
+
