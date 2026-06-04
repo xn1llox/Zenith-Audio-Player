@@ -79,6 +79,11 @@ public sealed partial class MainWindow : Window
     private readonly ToneControlSettings _toneSettings = new();
     private readonly ZenithAiClient _zenithAiClient = new();
     private readonly List<ZenithAiChatMessage> _zenithAiMessages = [];
+    private CancellationTokenSource? _zenithAiRequestCancellation;
+    private bool _isDraggingZenithAiPanel;
+    private Windows.Foundation.Point _zenithAiDragStartPoint;
+    private double _zenithAiDragStartX;
+    private double _zenithAiDragStartY;
     private readonly List<string> _libraryFolders = [];
     private readonly List<LibraryTrack> _libraryTracks = [];
     private readonly List<LibraryTrack> _visibleLibraryTracks = [];
@@ -572,376 +577,236 @@ public sealed partial class MainWindow : Window
         await RefreshOutputDevicesAsync();
     }
 
-    private async void ZenithAiButton_Click(object sender, RoutedEventArgs e)
+    private void ZenithAiButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialogWidth = Math.Clamp(AppWindow.Size.Width - 220, 640, 920);
-        var contentWidth = dialogWidth - 36;
-        var transcriptHeight = Math.Clamp(AppWindow.Size.Height - 430, 340, 620);
-        var glassBrush = new AcrylicBrush
-        {
-            TintColor = Windows.UI.Color.FromArgb(255, 18, 30, 42),
-            TintOpacity = 0.72,
-            TintLuminosityOpacity = 0.78,
-            FallbackColor = Windows.UI.Color.FromArgb(255, 24, 28, 36)
-        };
+        ConfigureZenithAiPanelLayout();
+        RefreshZenithAiSettingsUi();
+        RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
+        ZenithAiOverlayGrid.Visibility = Visibility.Visible;
+        ZenithAiQuestionTextBox.Focus(FocusState.Programmatic);
+    }
 
-        var transcriptPanel = new StackPanel
-        {
-            Spacing = 14,
-            Padding = new Thickness(2, 2, 10, 2)
-        };
+    private void ConfigureZenithAiPanelLayout()
+    {
+        var windowWidth = Math.Max(900, AppWindow.Size.Width);
+        var windowHeight = Math.Max(700, AppWindow.Size.Height);
+        ZenithAiPanelBorder.Width = Math.Clamp(windowWidth - 420, 680, 940);
+        ZenithAiPanelBorder.Height = Math.Clamp(windowHeight - 220, 560, 760);
+        ClampZenithAiPanelPosition();
+    }
 
-        var transcriptScrollViewer = new ScrollViewer
-        {
-            Content = transcriptPanel,
-            Height = transcriptHeight,
-            Width = contentWidth,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollMode = ScrollMode.Enabled,
-            HorizontalScrollMode = ScrollMode.Disabled,
-            ZoomMode = ZoomMode.Disabled
-        };
-        RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
+    private void RefreshZenithAiSettingsUi()
+    {
+        _zenithAiClient.ReloadSettings();
+        ZenithAiProviderTextBox.Text = _zenithAiClient.Settings.Provider;
+        ZenithAiEndpointTextBox.Text = _zenithAiClient.Settings.Endpoint;
+        ZenithAiModelTextBox.Text = _zenithAiClient.Settings.Model;
+        ZenithAiApiKeyBox.Password = _zenithAiClient.Settings.ApiKey;
+        ZenithAiStatusTextBlock.Text = _zenithAiClient.IsConfigured
+            ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
+            : "Falta API key. Abre Config para guardar NVIDIA NIM u otra API compatible.";
+    }
 
-        var questionTextBox = new TextBox
-        {
-            PlaceholderText = "Pregunta sobre la pista actual, formatos, DSD/FLAC, DACs, historia musical o cómo escuchar mejor",
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            MinHeight = 54,
-            MaxHeight = 110,
-            Width = contentWidth
-        };
+    private double GetZenithAiTranscriptWidth()
+    {
+        return Math.Max(320, ZenithAiPanelBorder.Width - 72);
+    }
 
-        var statusTextBlock = new TextBlock
-        {
-            Text = _zenithAiClient.IsConfigured
-                ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
-                : "Falta API key. Abre Ajustes de API para configurar NVIDIA NIM u otra API compatible.",
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = contentWidth
-        };
+    private void ZenithAiCloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        _zenithAiRequestCancellation?.Cancel();
+        _zenithAiRequestCancellation?.Dispose();
+        _zenithAiRequestCancellation = null;
+        ZenithAiOverlayGrid.Visibility = Visibility.Collapsed;
+    }
 
-        var providerTextBox = new TextBox
-        {
-            Header = "Proveedor",
-            Text = _zenithAiClient.Settings.Provider,
-            PlaceholderText = "NVIDIA NIM, OpenAI compatible, servidor propio"
-        };
-        var endpointTextBox = new TextBox
-        {
-            Header = "Endpoint chat completions",
-            Text = _zenithAiClient.Settings.Endpoint,
-            PlaceholderText = "https://integrate.api.nvidia.com/v1/chat/completions",
-            TextWrapping = TextWrapping.NoWrap
-        };
-        var modelTextBox = new TextBox
-        {
-            Header = "Modelo",
-            Text = _zenithAiClient.Settings.Model,
-            PlaceholderText = "google/gemma-4-31b-it"
-        };
-        var apiKeyBox = new PasswordBox
-        {
-            Header = "API key",
-            Password = _zenithAiClient.Settings.ApiKey,
-            PlaceholderText = "Pega aquí tu key"
-        };
-        var saveApiButton = new Button
-        {
-            Content = "Guardar API"
-        };
-        var resetApiButton = new Button
-        {
-            Content = "Usar NVIDIA NIM"
-        };
-        var apiButtonsPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10
-        };
-        apiButtonsPanel.Children.Add(saveApiButton);
-        apiButtonsPanel.Children.Add(resetApiButton);
-        var apiSettingsPanel = new StackPanel
-        {
-            Spacing = 8,
-            Visibility = Visibility.Collapsed,
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-        apiSettingsPanel.Children.Add(new TextBlock
-        {
-            Text = "Configura NVIDIA NIM u otra API compatible con OpenAI Chat Completions. Se guarda localmente por usuario.",
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = contentWidth
-        });
-        apiSettingsPanel.Children.Add(providerTextBox);
-        apiSettingsPanel.Children.Add(endpointTextBox);
-        apiSettingsPanel.Children.Add(modelTextBox);
-        apiSettingsPanel.Children.Add(apiKeyBox);
-        apiSettingsPanel.Children.Add(apiButtonsPanel);
+    private void ZenithAiClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        _zenithAiMessages.Clear();
+        RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
+        ZenithAiStatusTextBlock.Text = "Historial limpio. Pregunta algo de audio.";
+    }
 
-        var sendButton = new Button
+    private void ZenithAiConfigButton_Click(object sender, RoutedEventArgs e)
+    {
+        ZenithAiApiSettingsPanel.Visibility = ZenithAiApiSettingsPanel.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        ZenithAiConfigButton.Content = ZenithAiApiSettingsPanel.Visibility == Visibility.Visible ? "Ocultar config" : "Config";
+        ZenithAiStatusTextBlock.Text = _zenithAiClient.IsConfigured
+            ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
+            : "Falta API key. Usa Config para guardar NVIDIA NIM u otra API compatible.";
+    }
+
+    private void ZenithAiSaveApiButton_Click(object sender, RoutedEventArgs e)
+    {
+        var settings = new ZenithAiSettings(
+            string.IsNullOrWhiteSpace(ZenithAiProviderTextBox.Text) ? "API compatible" : ZenithAiProviderTextBox.Text.Trim(),
+            ZenithAiEndpointTextBox.Text.Trim(),
+            ZenithAiModelTextBox.Text.Trim(),
+            ZenithAiApiKeyBox.Password.Trim());
+        ZenithAiSettings.Save(settings);
+        _zenithAiClient.ReloadSettings();
+        ZenithAiStatusTextBlock.Text = _zenithAiClient.IsConfigured
+            ? $"API guardada: {_zenithAiClient.Settings.Provider}."
+            : "API guardada, pero falta API key.";
+    }
+
+    private void ZenithAiResetApiButton_Click(object sender, RoutedEventArgs e)
+    {
+        ZenithAiProviderTextBox.Text = ZenithAiSettings.DefaultProvider;
+        ZenithAiEndpointTextBox.Text = ZenithAiSettings.DefaultEndpoint;
+        ZenithAiModelTextBox.Text = ZenithAiSettings.DefaultModel;
+        var settings = new ZenithAiSettings(
+            ZenithAiSettings.DefaultProvider,
+            ZenithAiSettings.DefaultEndpoint,
+            ZenithAiSettings.DefaultModel,
+            ZenithAiApiKeyBox.Password.Trim());
+        ZenithAiSettings.Save(settings);
+        _zenithAiClient.ReloadSettings();
+        ZenithAiStatusTextBlock.Text = "NVIDIA NIM restaurado. Pega o conserva tu API key y presiona Guardar API.";
+    }
+
+    private async void ZenithAiSendButton_Click(object sender, RoutedEventArgs e)
+    {
+        await SendZenithAiQuestionAsync();
+    }
+
+    private async void ZenithAiQuestionTextBox_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter)
         {
-            Content = "Enviar",
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
-
-        var clearButton = new Button
-        {
-            Content = "Limpiar",
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
-
-        var configButton = new Button
-        {
-            Content = "Config",
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
-
-        var buttonsPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
-        buttonsPanel.Children.Add(sendButton);
-        buttonsPanel.Children.Add(clearButton);
-        buttonsPanel.Children.Add(configButton);
-
-        var contentPanel = new Grid
-        {
-            Width = contentWidth
-        };
-        contentPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        contentPanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        contentPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        contentPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        contentPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        contentPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        var introTextBlock = new TextBlock
-        {
-            Text = "Asistente BETA especializado en historia musical, formatos, equipos y escucha crítica.",
-            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 10),
-            MaxWidth = contentWidth
-        };
-        contentPanel.Children.Add(introTextBlock);
-
-        Grid.SetRow(transcriptScrollViewer, 1);
-        transcriptScrollViewer.Margin = new Thickness(0, 0, 0, 12);
-        contentPanel.Children.Add(transcriptScrollViewer);
-
-        Grid.SetRow(questionTextBox, 2);
-        questionTextBox.Margin = new Thickness(0, 0, 0, 10);
-        contentPanel.Children.Add(questionTextBox);
-
-        Grid.SetRow(buttonsPanel, 3);
-        buttonsPanel.Margin = new Thickness(0, 0, 0, 10);
-        contentPanel.Children.Add(buttonsPanel);
-
-        Grid.SetRow(apiSettingsPanel, 4);
-        contentPanel.Children.Add(apiSettingsPanel);
-
-        Grid.SetRow(statusTextBlock, 5);
-        contentPanel.Children.Add(statusTextBlock);
-
-        var glassPanel = new Border
-        {
-            Width = dialogWidth,
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16),
-            Background = glassBrush,
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 95, 191, 255)),
-            BorderThickness = new Thickness(1),
-            Child = contentPanel
-        };
-
-        var dialogTransform = new TranslateTransform();
-        var titleDragHandle = new Border
-        {
-            Padding = new Thickness(0, 0, 0, 2),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(1, 255, 255, 255)),
-            Child = new StackPanel
-            {
-                Spacing = 2,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "ZenithAI (BETA)",
-                        FontSize = 20,
-                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                        TextWrapping = TextWrapping.Wrap
-                    },
-                    new TextBlock
-                    {
-                        Text = "Arrastra este encabezado para mover el chat",
-                        FontSize = 12,
-                        Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-                        TextWrapping = TextWrapping.Wrap
-                    }
-                }
-            }
-        };
-
-        var dragCoordinateRoot = Content as UIElement;
-        var isDraggingZenithAi = false;
-        var dragStartPoint = new Windows.Foundation.Point();
-        var dragStartX = 0d;
-        var dragStartY = 0d;
-
-        void StopZenithAiDrag()
-        {
-            isDraggingZenithAi = false;
+            return;
         }
 
-        titleDragHandle.PointerPressed += (_, args) =>
+        e.Handled = true;
+        await SendZenithAiQuestionAsync();
+    }
+
+    private async Task SendZenithAiQuestionAsync()
+    {
+        var question = ZenithAiQuestionTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(question) || !ZenithAiSendButton.IsEnabled)
         {
-            isDraggingZenithAi = true;
-            dragStartPoint = args.GetCurrentPoint(dragCoordinateRoot ?? titleDragHandle).Position;
-            dragStartX = dialogTransform.X;
-            dragStartY = dialogTransform.Y;
-            titleDragHandle.CapturePointer(args.Pointer);
-            args.Handled = true;
-        };
+            return;
+        }
 
-        titleDragHandle.PointerMoved += (_, args) =>
+        ZenithAiQuestionTextBox.Text = string.Empty;
+        _zenithAiMessages.Add(new ZenithAiChatMessage("user", question));
+        RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth(), "ZenithAI esta pensando...");
+        ZenithAiSendButton.IsEnabled = false;
+        ZenithAiClearButton.IsEnabled = false;
+        ZenithAiStatusTextBlock.Text = "Consultando API en la nube. Limite de espera: 180 segundos.";
+
+        _zenithAiRequestCancellation?.Cancel();
+        _zenithAiRequestCancellation?.Dispose();
+        _zenithAiRequestCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+
+        try
         {
-            if (!isDraggingZenithAi)
-            {
-                return;
-            }
+            var response = await _zenithAiClient.SendAsync(
+                _zenithAiMessages,
+                BuildZenithAiAudioContext(),
+                _zenithAiRequestCancellation.Token);
 
-            var currentPoint = args.GetCurrentPoint(dragCoordinateRoot ?? titleDragHandle).Position;
-            var requestedX = dragStartX + currentPoint.X - dragStartPoint.X;
-            var requestedY = dragStartY + currentPoint.Y - dragStartPoint.Y;
-            dialogTransform.X = Math.Clamp(requestedX, -AppWindow.Size.Width * 0.45, AppWindow.Size.Width * 0.45);
-            dialogTransform.Y = Math.Clamp(requestedY, -AppWindow.Size.Height * 0.35, AppWindow.Size.Height * 0.35);
-            args.Handled = true;
-        };
-
-        titleDragHandle.PointerReleased += (_, args) =>
+            _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", response));
+            RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
+            ZenithAiStatusTextBlock.Text = "Listo. ZenithAI no usa modelos locales ni carga el CPU/GPU para inferencia.";
+        }
+        catch (OperationCanceledException)
         {
-            StopZenithAiDrag();
-            titleDragHandle.ReleasePointerCapture(args.Pointer);
-            args.Handled = true;
-        };
-        titleDragHandle.PointerCanceled += (_, _) => StopZenithAiDrag();
-        titleDragHandle.PointerCaptureLost += (_, _) => StopZenithAiDrag();
-
-        using var cancellationTokenSource = new CancellationTokenSource();
-        var dialog = new ContentDialog
+            var message = ZenithAiOverlayGrid.Visibility == Visibility.Visible
+                ? "La API no respondio dentro de 180 segundos. Prueba otro modelo, reduce la pregunta o revisa NVIDIA NIM."
+                : "Consulta cancelada al cerrar ZenithAI.";
+            _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", message));
+            RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
+            ZenithAiStatusTextBlock.Text = message;
+        }
+        catch (Exception ex)
         {
-            XamlRoot = Content.XamlRoot,
-            Title = titleDragHandle,
-            Content = glassPanel,
-            CloseButtonText = "Cerrar",
-            DefaultButton = ContentDialogButton.None,
-            MinWidth = dialogWidth + 52,
-            MaxWidth = dialogWidth + 52,
-            RenderTransform = dialogTransform
-        };
-        dialog.Resources["ContentDialogMinWidth"] = dialogWidth + 52;
-        dialog.Resources["ContentDialogMaxWidth"] = dialogWidth + 52;
-
-        clearButton.Click += (_, _) =>
+            var provider = string.IsNullOrWhiteSpace(_zenithAiClient.Settings.Provider) ? "la API" : _zenithAiClient.Settings.Provider;
+            _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", $"No pude conectar con {provider}: {ex.Message}"));
+            RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
+            ZenithAiStatusTextBlock.Text = "Revisa conexion, API key, endpoint o disponibilidad del modelo.";
+        }
+        finally
         {
-            _zenithAiMessages.Clear();
-            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
-            ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
-            statusTextBlock.Text = "Historial limpio. Pregunta algo de audio.";
-        };
+            ZenithAiSendButton.IsEnabled = true;
+            ZenithAiClearButton.IsEnabled = true;
+            ScrollZenithAiTranscriptToEnd(ZenithAiTranscriptScrollViewer);
+        }
+    }
 
-        configButton.Click += (_, _) =>
+    private void ZenithAiDragHeader_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _isDraggingZenithAiPanel = true;
+        _zenithAiDragStartPoint = e.GetCurrentPoint(RootGrid).Position;
+        _zenithAiDragStartX = ZenithAiPanelTransform.X;
+        _zenithAiDragStartY = ZenithAiPanelTransform.Y;
+        ZenithAiDragHeaderBorder.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void ZenithAiDragHeader_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (!_isDraggingZenithAiPanel)
         {
-            apiSettingsPanel.Visibility = apiSettingsPanel.Visibility == Visibility.Visible
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-            configButton.Content = apiSettingsPanel.Visibility == Visibility.Visible ? "Ocultar config" : "Config";
-            statusTextBlock.Text = _zenithAiClient.IsConfigured
-                ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
-                : "Falta API key. Usa Config para guardar NVIDIA NIM u otra API compatible.";
-        };
+            return;
+        }
 
-        saveApiButton.Click += (_, _) =>
+        var currentPoint = e.GetCurrentPoint(RootGrid).Position;
+        ZenithAiPanelTransform.X = _zenithAiDragStartX + currentPoint.X - _zenithAiDragStartPoint.X;
+        ZenithAiPanelTransform.Y = _zenithAiDragStartY + currentPoint.Y - _zenithAiDragStartPoint.Y;
+        ClampZenithAiPanelPosition();
+        e.Handled = true;
+    }
+
+    private void ZenithAiDragHeader_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        StopZenithAiPanelDrag();
+        ZenithAiDragHeaderBorder.ReleasePointerCapture(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void ZenithAiDragHeader_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        StopZenithAiPanelDrag();
+    }
+
+    private void ZenithAiDragHeader_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        StopZenithAiPanelDrag();
+    }
+
+    private void StopZenithAiPanelDrag()
+    {
+        _isDraggingZenithAiPanel = false;
+    }
+
+    private void ClampZenithAiPanelPosition()
+    {
+        var rootWidth = RootGrid.ActualWidth > 0 ? RootGrid.ActualWidth : AppWindow.Size.Width;
+        var rootHeight = RootGrid.ActualHeight > 0 ? RootGrid.ActualHeight : AppWindow.Size.Height;
+        var maxX = Math.Max(0, (rootWidth - ZenithAiPanelBorder.Width) / 2 - 16);
+        var maxY = Math.Max(0, (rootHeight - ZenithAiPanelBorder.Height) / 2 - 16);
+        ZenithAiPanelTransform.X = Math.Clamp(ZenithAiPanelTransform.X, -maxX, maxX);
+        ZenithAiPanelTransform.Y = Math.Clamp(ZenithAiPanelTransform.Y, -maxY, maxY);
+    }
+
+    private void ZenithAiTranscriptScrollViewer_PointerWheelChanged(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        var delta = e.GetCurrentPoint(ZenithAiTranscriptScrollViewer).Properties.MouseWheelDelta;
+        if (delta == 0)
         {
-            var settings = new ZenithAiSettings(
-                string.IsNullOrWhiteSpace(providerTextBox.Text) ? "API compatible" : providerTextBox.Text.Trim(),
-                endpointTextBox.Text.Trim(),
-                modelTextBox.Text.Trim(),
-                apiKeyBox.Password.Trim());
-            ZenithAiSettings.Save(settings);
-            _zenithAiClient.ReloadSettings();
-            statusTextBlock.Text = _zenithAiClient.IsConfigured
-                ? $"API guardada: {_zenithAiClient.Settings.Provider}."
-                : "API guardada, pero falta API key.";
-        };
+            return;
+        }
 
-        resetApiButton.Click += (_, _) =>
-        {
-            providerTextBox.Text = ZenithAiSettings.DefaultProvider;
-            endpointTextBox.Text = ZenithAiSettings.DefaultEndpoint;
-            modelTextBox.Text = ZenithAiSettings.DefaultModel;
-            var settings = new ZenithAiSettings(
-                ZenithAiSettings.DefaultProvider,
-                ZenithAiSettings.DefaultEndpoint,
-                ZenithAiSettings.DefaultModel,
-                apiKeyBox.Password.Trim());
-            ZenithAiSettings.Save(settings);
-            _zenithAiClient.ReloadSettings();
-            statusTextBlock.Text = "NVIDIA NIM restaurado. Pega o conserva tu API key y presiona Guardar API.";
-        };
-
-        sendButton.Click += async (_, _) =>
-        {
-            var question = questionTextBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(question))
-            {
-                return;
-            }
-
-            questionTextBox.Text = string.Empty;
-            _zenithAiMessages.Add(new ZenithAiChatMessage("user", question));
-            RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth, "ZenithAI está pensando...");
-            ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
-            sendButton.IsEnabled = false;
-            clearButton.IsEnabled = false;
-            statusTextBlock.Text = "Consultando NVIDIA NIM en la nube...";
-
-            try
-            {
-                var response = await _zenithAiClient.SendAsync(
-                    _zenithAiMessages,
-                    BuildZenithAiAudioContext(),
-                    cancellationTokenSource.Token);
-
-                _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", response));
-                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
-                ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
-                statusTextBlock.Text = "Listo. ZenithAI no usa modelos locales ni carga el CPU/GPU para inferencia.";
-            }
-            catch (Exception ex)
-            {
-                _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", $"No pude conectar con NVIDIA NIM: {ex.Message}"));
-                RenderZenithAiTranscript(transcriptPanel, transcriptScrollViewer, contentWidth);
-                ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
-                statusTextBlock.Text = "Revisa conexion, API key o disponibilidad del modelo NVIDIA NIM.";
-            }
-            finally
-            {
-                sendButton.IsEnabled = true;
-                clearButton.IsEnabled = true;
-                ScrollZenithAiTranscriptToEnd(transcriptScrollViewer);
-            }
-        };
-
-        await dialog.ShowAsync();
-        cancellationTokenSource.Cancel();
+        var nextOffset = Math.Clamp(
+            ZenithAiTranscriptScrollViewer.VerticalOffset - delta,
+            0,
+            ZenithAiTranscriptScrollViewer.ScrollableHeight);
+        ZenithAiTranscriptScrollViewer.ChangeView(null, nextOffset, null, disableAnimation: true);
+        e.Handled = true;
     }
 
     private async void SelectSacdExtractorButton_Click(object sender, RoutedEventArgs e)

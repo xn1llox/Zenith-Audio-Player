@@ -7,7 +7,7 @@
     mc:Ignorable="d"
     Title="Zenith Audio">
 
-    <Grid Padding="24" RowSpacing="16" Background="#000000">
+    <Grid x:Name="RootGrid" Padding="24" RowSpacing="16" Background="#000000">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -52,10 +52,10 @@
 
                 <Button x:Name="ZenithAiButton"
                         Click="ZenithAiButton_Click"
-                        ToolTipService.ToolTip="ZenitAI (BETA) para música, formatos y escucha audiófila">
+                        ToolTipService.ToolTip="ZenithAI (BETA) para musica, formatos y escucha audiofila">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <FontIcon Glyph="&#xE8D4;" FontSize="15" />
-                        <TextBlock Text="ZenitAI (BETA)" />
+                        <TextBlock Text="ZenithAI (BETA)" />
                     </StackPanel>
                 </Button>
             </StackPanel>
@@ -1234,6 +1234,159 @@
                 </StackPanel>
             </Grid>
         </Border>
+
+        <Grid x:Name="ZenithAiOverlayGrid"
+              Grid.RowSpan="3"
+              Visibility="Collapsed"
+              Background="#66000000"
+              Canvas.ZIndex="100">
+            <Border x:Name="ZenithAiPanelBorder"
+                    Width="780"
+                    Height="660"
+                    MinWidth="560"
+                    MaxWidth="980"
+                    MinHeight="520"
+                    MaxHeight="820"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    CornerRadius="10"
+                    Padding="18"
+                    Background="#20242B"
+                    BorderBrush="#5FBFFF"
+                    BorderThickness="1">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="ZenithAiPanelTransform" />
+                </Border.RenderTransform>
+
+                <Grid RowSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border x:Name="ZenithAiDragHeaderBorder"
+                            Background="Transparent"
+                            Padding="0,0,0,4"
+                            PointerPressed="ZenithAiDragHeader_PointerPressed"
+                            PointerMoved="ZenithAiDragHeader_PointerMoved"
+                            PointerReleased="ZenithAiDragHeader_PointerReleased"
+                            PointerCanceled="ZenithAiDragHeader_PointerCanceled"
+                            PointerCaptureLost="ZenithAiDragHeader_PointerCaptureLost">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="ZenithAI (BETA)"
+                                           FontSize="21"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="Arrastra este encabezado para mover el chat"
+                                           FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+
+                            <Button Grid.Column="1"
+                                    Width="38"
+                                    Height="34"
+                                    Click="ZenithAiCloseButton_Click"
+                                    ToolTipService.ToolTip="Cerrar ZenithAI">
+                                <FontIcon Glyph="&#xE711;" FontSize="13" />
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock x:Name="ZenithAiIntroTextBlock"
+                               Grid.Row="1"
+                               Text="Asistente BETA especializado en historia musical, formatos, equipos y escucha critica."
+                               TextWrapping="WrapWholeWords"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                    <Border Grid.Row="2"
+                            CornerRadius="12"
+                            Padding="14"
+                            Background="#121922"
+                            BorderBrush="#32658A"
+                            BorderThickness="1">
+                        <ScrollViewer x:Name="ZenithAiTranscriptScrollViewer"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollMode="Enabled"
+                                      HorizontalScrollMode="Disabled"
+                                      ZoomMode="Disabled"
+                                      PointerWheelChanged="ZenithAiTranscriptScrollViewer_PointerWheelChanged">
+                            <StackPanel x:Name="ZenithAiTranscriptPanel"
+                                        Spacing="14"
+                                        Padding="2,2,12,2" />
+                        </ScrollViewer>
+                    </Border>
+
+                    <TextBox x:Name="ZenithAiQuestionTextBox"
+                             Grid.Row="3"
+                             PlaceholderText="Pregunta sobre la pista actual, formatos, DSD/FLAC, DACs, historia musical o como escuchar mejor"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             MinHeight="54"
+                             MaxHeight="118"
+                             KeyDown="ZenithAiQuestionTextBox_KeyDown" />
+
+                    <StackPanel Grid.Row="4"
+                                Orientation="Horizontal"
+                                Spacing="10">
+                        <Button x:Name="ZenithAiSendButton"
+                                Content="Enviar"
+                                Click="ZenithAiSendButton_Click" />
+                        <Button x:Name="ZenithAiClearButton"
+                                Content="Limpiar"
+                                Click="ZenithAiClearButton_Click" />
+                        <Button x:Name="ZenithAiConfigButton"
+                                Content="Config"
+                                Click="ZenithAiConfigButton_Click" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="ZenithAiApiSettingsPanel"
+                                Grid.Row="5"
+                                Spacing="8"
+                                Visibility="Collapsed"
+                                Margin="0,2,0,0">
+                        <TextBlock Text="Configura NVIDIA NIM u otra API compatible con OpenAI Chat Completions. Se guarda localmente por usuario."
+                                   TextWrapping="WrapWholeWords"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBox x:Name="ZenithAiProviderTextBox"
+                                 Header="Proveedor"
+                                 PlaceholderText="NVIDIA NIM, OpenAI compatible, servidor propio" />
+                        <TextBox x:Name="ZenithAiEndpointTextBox"
+                                 Header="Endpoint chat completions"
+                                 PlaceholderText="https://integrate.api.nvidia.com/v1/chat/completions"
+                                 TextWrapping="NoWrap" />
+                        <TextBox x:Name="ZenithAiModelTextBox"
+                                 Header="Modelo"
+                                 PlaceholderText="google/gemma-4-31b-it" />
+                        <PasswordBox x:Name="ZenithAiApiKeyBox"
+                                     Header="API key"
+                                     PlaceholderText="Pega aqui tu key" />
+                        <StackPanel Orientation="Horizontal"
+                                    Spacing="10">
+                            <Button Content="Guardar API"
+                                    Click="ZenithAiSaveApiButton_Click" />
+                            <Button Content="Usar NVIDIA NIM"
+                                    Click="ZenithAiResetApiButton_Click" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock x:Name="ZenithAiStatusTextBlock"
+                               Grid.Row="6"
+                               TextWrapping="WrapWholeWords"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </Window>
 

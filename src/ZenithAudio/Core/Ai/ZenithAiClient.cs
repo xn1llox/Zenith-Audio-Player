@@ -8,7 +8,7 @@ public sealed class ZenithAiClient
 {
     private static readonly HttpClient HttpClient = new()
     {
-        Timeout = TimeSpan.FromSeconds(60)
+        Timeout = Timeout.InfiniteTimeSpan
     };
 
     public ZenithAiSettings Settings { get; private set; } = ZenithAiSettings.Load();
@@ -28,7 +28,7 @@ public sealed class ZenithAiClient
         ReloadSettings();
         if (!Settings.IsConfigured)
         {
-            throw new InvalidOperationException("ZenitAI no tiene API configurada. Abre Config en ZenitAI y agrega una API key.");
+            throw new InvalidOperationException("ZenithAI no tiene API configurada. Abre Config en ZenithAI y agrega una API key.");
         }
 
         var messages = new List<object>
@@ -54,7 +54,7 @@ public sealed class ZenithAiClient
             messages,
             temperature = 0.45,
             top_p = 0.9,
-            max_tokens = 420,
+            max_tokens = 520,
             stream = false
         };
 
@@ -76,11 +76,11 @@ public sealed class ZenithAiClient
     private static string BuildSystemPrompt(string audioContext)
     {
         return
-            "Eres ZenitAI (BETA), un asistente integrado en Zenith Audio. " +
-            "Responde siempre en español claro, breve y experto. " +
-            "Tu dominio es exclusivamente audio: historia de la música, artistas, álbumes, formatos, DSD, FLAC, PCM, DACs, WASAPI, MPV, BASS, masterización, escucha crítica, configuración de Windows y buenas prácticas audiófilas. " +
+            "Eres ZenithAI (BETA), un asistente integrado en Zenith Audio. " +
+            "Responde siempre en espanol claro, breve y experto. " +
+            "Tu dominio es exclusivamente audio: historia de la musica, artistas, albumes, formatos, DSD, FLAC, PCM, DACs, WASAPI, MPV, BASS, masterizacion, escucha critica, configuracion de Windows y buenas practicas audiofilas. " +
             "Usa el contexto de la pista actual solo como referencia. No puedes leer carpetas ni discos directamente. " +
-            "Si el usuario pregunta algo fuera de audio, redirige amablemente al tema musical o de reproducción. " +
+            "Si el usuario pregunta algo fuera de audio, redirige amablemente al tema musical o de reproduccion. " +
             "No inventes datos tecnicos; cuando no sepas algo, dilo y ofrece una forma de comprobarlo. " +
             "Contexto actual del reproductor: " + audioContext;
     }
@@ -98,16 +98,16 @@ public sealed class ZenithAiClient
             if (firstChoice.TryGetProperty("message", out var message) &&
                 message.TryGetProperty("content", out var content))
             {
-                return content.GetString()?.Trim() ?? "ZenitAI no devolvió contenido.";
+                return content.GetString()?.Trim() ?? "ZenithAI no devolvio contenido.";
             }
 
             if (firstChoice.TryGetProperty("text", out var text))
             {
-                return text.GetString()?.Trim() ?? "ZenitAI no devolvió contenido.";
+                return text.GetString()?.Trim() ?? "ZenithAI no devolvio contenido.";
             }
         }
 
-        return "ZenitAI recibió una respuesta sin texto legible.";
+        return "ZenithAI recibio una respuesta sin texto legible.";
     }
 
     private static string TrimForUi(string value)
