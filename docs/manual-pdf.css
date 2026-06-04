@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --ink: #111827;
   --muted: #5b6472;
   --line: #d8dee8;
@@ -13,7 +13,7 @@
   margin: 18mm 16mm 18mm 16mm;
 
   @bottom-left {
-    content: "Zenith Audio Player 1.0.6";
+    content: "Zenith Audio Player";
     color: #6b7280;
     font-family: "Segoe UI", Arial, sans-serif;
     font-size: 8.5pt;
@@ -67,26 +67,28 @@ a {
   border-bottom: 1px solid rgba(15, 122, 168, 0.22);
   color: var(--muted);
   display: flex;
-  font-size: 8.5pt;
-  gap: 8px;
-  height: 8mm;
+  font-size: 8.8pt;
+  gap: 9px;
+  height: 11mm;
   justify-content: space-between;
   left: 16mm;
   line-height: 1;
-  overflow: hidden;
-  padding: 0 1mm 1.2mm;
+  overflow: visible;
+  padding: 1.6mm 1mm 1.8mm 0;
   position: fixed;
   right: auto;
-  top: 5mm;
+  top: 4mm;
   width: 178mm;
   z-index: 10;
 }
 
 .page-header img {
+  border-radius: 1.4mm;
   display: block;
   flex: 0 0 auto;
-  height: 5.2mm;
+  height: 6.8mm;
   object-fit: contain;
+  object-position: center;
   width: auto;
 }
 
@@ -95,6 +97,7 @@ a {
   display: flex;
   gap: 7px;
   letter-spacing: 0;
+  line-height: 1.2;
   min-width: 0;
 }
 
@@ -339,3 +342,4 @@ img {
     position: fixed;
   }
 }
+
