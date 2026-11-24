@@ -1,7 +1,7 @@
 param(
     [string]$PandocPath = "",
     [string]$BrowserPath = "",
-    [string]$Version = "1.0.6"
+    [string]$Version = "1.0.8"
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,7 +52,7 @@ if (-not (Test-Path $BrowserPath)) {
     --template $template `
     --css $cssFromHtml `
     --metadata "pagetitle=Manual Zenith Audio Player $Version" `
-    --metadata "subtitle=Reproductor Hi-Res para Windows, biblioteca local, DSD, CUE, letras y ZenithAI" `
+    --metadata "subtitle=Reproductor Hi-Res para Windows, ASIO DSD, WASAPI, biblioteca local, ZenithAI y Control Remoto Web" `
     --metadata "version=$Version" `
     --metadata "logo=$logoFromHtml" `
     --output $html

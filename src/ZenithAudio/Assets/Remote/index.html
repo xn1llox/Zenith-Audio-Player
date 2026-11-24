@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#040910" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/favicon.ico?v=2" type="image/x-icon" />
+  <link rel="shortcut icon" href="/favicon.ico?v=2" type="image/x-icon" />
+  <link rel="apple-touch-icon" href="/logo.png?v=2" />
+  <title>Zenith Audio · Control Remoto</title>
+
+  <!-- Tailwind CSS Play CDN with Zenith OLED theme -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            zenith: {
+              bg: '#000000',
+              panel: '#040910',
+              card: '#06111D',
+              surface: '#081829',
+              border: '#112C43',
+              cyan: '#46BFFF',
+              sky: '#7CD5FF',
+              mint: '#38E3A5',
+              muted: '#80A5BF',
+            }
+          },
+          fontFamily: {
+            sans: ['"Segoe UI"', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'sans-serif'],
+            mono: ['"Cascadia Mono"', 'Consolas', 'ui-monospace', 'monospace']
+          },
+          boxShadow: {
+            glow: '0 0 28px rgba(70, 191, 255, 0.28)',
+            'glow-strong': '0 0 36px rgba(70, 191, 255, 0.45)',
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    :root {
+      --accent: #46BFFF;
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background:
+        radial-gradient(720px 380px at 50% -90px, color-mix(in srgb, var(--accent) 24%, transparent), transparent 72%),
+        radial-gradient(480px 320px at 90% 100%, rgba(30, 120, 190, 0.12), transparent 75%),
+        #000000;
+      padding-bottom: calc(82px + var(--safe-bottom));
+    }
+
+    @media (min-width: 1024px) {
+      body {
+        padding-bottom: 28px;
+      }
+    }
+
+    .cover-glow {
+      box-shadow:
+        0 20px 46px rgba(0, 0, 0, 0.8),
+        0 0 42px color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+
+    /* Custom OLED Hi-Fi range sliders */
+    input[type="range"].zenith-range {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 28px;
+      background: transparent;
+      cursor: pointer;
+      margin: 0;
+    }
+    input[type="range"].zenith-range::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 9999px;
+      background: linear-gradient(90deg, #46BFFF var(--val, 0%), #0F2940 var(--val, 0%));
+    }
+    input[type="range"].zenith-range::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 9999px;
+      margin-top: -6px;
+      background: #EEF9FF;
+      border: 2px solid #46BFFF;
+      box-shadow: 0 0 12px rgba(70, 191, 255, 0.65);
+      transition: transform 0.12s ease;
+    }
+    input[type="range"].zenith-range:active::-webkit-slider-thumb {
+      transform: scale(1.16);
+    }
+    input[type="range"].zenith-range::-moz-range-track {
+      height: 6px;
+      border-radius: 9999px;
+      background: #0F2940;
+    }
+    input[type="range"].zenith-range::-moz-range-progress {
+      height: 6px;
+      border-radius: 9999px;
+      background: #46BFFF;
+    }
+    input[type="range"].zenith-range::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 9999px;
+      background: #EEF9FF;
+      border: 2px solid #46BFFF;
+      box-shadow: 0 0 12px rgba(70, 191, 255, 0.65);
+    }
+    input[type="range"].zenith-range:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    /* Animated switch */
+    .z-switch {
+      position: relative;
+      width: 48px;
+      height: 28px;
+      border-radius: 9999px;
+      background: #0E2233;
+      border: 1px solid #1C4563;
+      transition: background 0.18s ease, border-color 0.18s ease;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .z-switch::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 20px;
+      height: 20px;
+      border-radius: 9999px;
+      background: #9CC2DC;
+      transition: transform 0.18s ease, background 0.18s ease;
+    }
+    .z-switch.on {
+      background: #0D679F;
+      border-color: #54CAFF;
+      box-shadow: 0 0 14px rgba(70, 191, 255, 0.32);
+    }
+    .z-switch.on::after {
+      transform: translateX(20px);
+      background: #FFFFFF;
+    }
+
+    /* Subtle dark scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #02070C; }
+    ::-webkit-scrollbar-thumb { background: #143652; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #225E8A; }
+
+    .vu-bar {
+      transition: height 0.14s ease-out, opacity 0.14s ease-out;
+    }
+  </style>
+</head>
+<body class="bg-black text-sky-50 min-h-[100dvh] antialiased selection:bg-sky-500/30 selection:text-white" style="background-color:#000000;color:#eaf6ff">
+
+  <!-- TOP STICKY GLASS BAR -->
+  <header class="sticky top-0 z-30 border-b border-zenith-border/90 bg-zenith-panel/85 backdrop-blur-xl">
+    <div class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
+      <div class="flex min-w-0 items-center gap-3">
+        <div class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl shadow-glow">
+          <img src="/favicon.ico?v=2" onerror="this.src='/logo.png?v=2'" alt="Zenith Audio" class="h-10 w-10 object-contain" />
+        </div>
+        <div class="min-w-0">
+          <h1 class="truncate text-base font-bold tracking-tight text-sky-50 leading-tight">Zenith Audio</h1>
+          <p id="hostSub" class="truncate text-[11px] font-medium text-zenith-muted">Control remoto LAN</p>
+        </div>
+      </div>
+
+      <div id="livePill" class="inline-flex shrink-0 items-center gap-2 rounded-full border border-sky-800/80 bg-zenith-card/90 px-3 py-1.5 text-[11px] font-semibold text-sky-200">
+        <span id="liveDot" class="h-2 w-2 rounded-full bg-zenith-mint shadow-[0_0_8px_#38E3A5] animate-pulse"></span>
+        <span id="liveLabel">En vivo</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- FLOATING TOAST -->
+  <div id="toast"
+       class="pointer-events-none fixed left-1/2 top-16 z-50 max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-4 rounded-xl border border-sky-400/70 bg-sky-950/95 px-4 py-2 text-center text-xs font-semibold text-sky-50 opacity-0 shadow-2xl backdrop-blur-md transition-all duration-200">
+  </div>
+
+  <!-- MAIN SHELL -->
+  <main class="mx-auto grid max-w-6xl gap-4 px-3.5 py-4 lg:grid-cols-[410px_1fr] lg:items-start lg:gap-5 lg:px-5 lg:py-5">
+
+    <!-- LEFT / PRIMARY: NOW PLAYING DECK -->
+    <section id="view-now" class="flex flex-col gap-4 lg:sticky lg:top-[76px]">
+      <div class="rounded-2xl border border-zenith-border bg-gradient-to-b from-zenith-card/95 to-zenith-panel/98 p-4 shadow-2xl sm:p-5">
+
+        <!-- Cover Art -->
+        <div class="cover-glow relative mx-auto mb-4 aspect-square w-full max-w-[268px] overflow-hidden rounded-2xl border border-sky-400/25 bg-[#030A13]">
+          <img id="coverImg" src="/logo.png?v=3" onerror="this.src='/favicon.ico?v=3'" alt="Carátula" class="h-full w-full p-5 object-contain transition-all duration-300" />
+          <span id="transportBadge"
+                class="absolute right-2.5 top-2.5 rounded-full border border-sky-400/50 bg-[#030C16]/85 px-2.5 py-1 text-[10px] font-bold tracking-wider text-sky-200 backdrop-blur-md">
+            LISTO
+          </span>
+          <span id="bitrateBadge"
+                class="absolute bottom-2.5 left-2.5 rounded-full border border-sky-900/80 bg-[#030C16]/80 px-2.5 py-0.5 font-mono text-[10px] font-semibold text-sky-300/90 backdrop-blur-md">
+            --
+          </span>
+        </div>
+
+        <!-- Track Info -->
+        <div class="text-center">
+          <h2 id="trackTitle" class="break-words text-lg font-bold leading-snug text-white sm:text-xl">
+            Sin pista cargada
+          </h2>
+          <p id="trackSubtitle" class="mt-1 truncate text-xs font-medium text-zenith-muted">
+            Elige una canción desde Biblioteca o en el PC
+          </p>
+          <p id="lyricLine" class="mt-2 min-h-[18px] text-xs italic text-zenith-sky/90"></p>
+        </div>
+
+        <!-- Technical Signal Pills -->
+        <div class="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+          <span id="codecPill" class="rounded-full border border-sky-500/50 bg-sky-950/90 px-2.5 py-1 text-[11px] font-bold text-sky-100">PCM</span>
+          <span id="ratePill" class="rounded-full border border-zenith-border bg-zenith-panel px-2.5 py-1 text-[11px] font-semibold text-sky-200/90">-- kHz</span>
+          <span id="enginePill" class="rounded-full border border-zenith-border bg-zenith-panel px-2.5 py-1 text-[11px] font-semibold text-sky-200/90">WASAPI</span>
+          <span id="outputPill" class="max-w-[210px] truncate rounded-full border border-zenith-border bg-zenith-panel px-2.5 py-1 text-[11px] font-semibold text-sky-300/85">Salida</span>
+        </div>
+
+        <!-- Live Mini VU Strip -->
+        <div id="vuStrip" class="my-3.5 grid h-5 grid-cols-[repeat(20,minmax(0,1fr))] items-end gap-1 px-1.5"></div>
+
+        <!-- Seek Timeline -->
+        <div>
+          <input id="seekSlider" type="range" min="0" max="100" step="0.5" value="0" class="zenith-range" />
+          <div class="mt-0.5 flex justify-between font-mono text-[11px] text-zenith-muted tabular-nums">
+            <span id="curTime">0:00</span>
+            <span id="durTime">0:00</span>
+          </div>
+        </div>
+
+        <!-- Hi-Fi Transport Controls -->
+        <div class="mt-3.5 flex items-center justify-center gap-2.5 sm:gap-3">
+          <button id="btnShuffle" onclick="sendAction('shuffle')" title="Aleatorio"
+                  class="flex h-11 w-11 items-center justify-center rounded-full border border-sky-900/90 bg-zenith-surface text-sky-200 transition hover:border-sky-500/60 active:scale-95">
+            <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M16 3h5v5h-2V6.41l-4.29 4.3-1.42-1.42L17.59 5H16V3zM4 6h4.59l9.7 9.71L19.59 17H16v2h5v-5h-2v1.59l-9.71-9.7L8.59 5H4v1zm0 11h4.59l3.12-3.12 1.41 1.41L9.41 19H4v-2z"/></svg>
+          </button>
+
+          <button onclick="sendAction('previous')" title="Anterior"
+                  class="flex h-12 w-12 items-center justify-center rounded-full border border-sky-900/90 bg-zenith-surface text-sky-100 transition hover:border-sky-500/60 active:scale-95">
+            <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M6 6h2v12H6V6zm3.5 6 8.5 6V6l-8.5 6z"/></svg>
+          </button>
+
+          <button id="btnPlayPause" onclick="sendAction('toggle_play')" title="Reproducir / Pausar"
+                  class="flex h-[62px] w-[62px] items-center justify-center rounded-full border border-sky-300/70 bg-gradient-to-br from-sky-500 via-sky-600 to-blue-800 text-white shadow-glow-strong transition hover:brightness-110 active:scale-95">
+            <svg id="playPauseIcon" class="h-6 w-6 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+
+          <button onclick="sendAction('stop')" title="Detener"
+                  class="flex h-12 w-12 items-center justify-center rounded-full border border-sky-900/90 bg-zenith-surface text-sky-100 transition hover:border-sky-500/60 active:scale-95">
+            <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          </button>
+
+          <button onclick="sendAction('next')" title="Siguiente"
+                  class="flex h-11 w-11 items-center justify-center rounded-full border border-sky-900/90 bg-zenith-surface text-sky-200 transition hover:border-sky-500/60 active:scale-95">
+            <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zm10-12v12h2V6h-2z"/></svg>
+          </button>
+        </div>
+
+        <!-- Volume Control -->
+        <div class="mt-4 border-t border-zenith-border/80 pt-3.5">
+          <div class="mb-1.5 flex items-center justify-between text-xs">
+            <span class="flex items-center gap-1.5 font-semibold text-zenith-muted">
+              <svg class="h-4 w-4 fill-sky-400" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+              Volumen
+            </span>
+            <span id="volLabel" class="font-mono font-bold text-sky-100">100%</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="btnMute" onclick="toggleMute()" title="Silenciar"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-900/90 bg-zenith-surface text-xs font-bold text-sky-200 transition active:scale-95">
+              M
+            </button>
+            <button onclick="nudgeVolume(-5)"
+                    class="flex h-9 shrink-0 items-center justify-center rounded-xl border border-sky-900/90 bg-zenith-surface px-2.5 text-xs font-bold text-sky-200 transition active:scale-95">
+              -5
+            </button>
+            <input id="volSlider" type="range" min="0" max="100" step="1" value="100" class="zenith-range flex-1" />
+            <button onclick="nudgeVolume(5)"
+                    class="flex h-9 shrink-0 items-center justify-center rounded-xl border border-sky-900/90 bg-zenith-surface px-2.5 text-xs font-bold text-sky-200 transition active:scale-95">
+              +5
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT / SECONDARY TABS (LIBRARY & AUDIO) -->
+    <div class="flex min-w-0 flex-col gap-4">
+
+      <!-- Desktop Tab Switcher -->
+      <div class="hidden rounded-xl border border-zenith-border bg-zenith-panel p-1.5 lg:grid lg:grid-cols-2 lg:gap-1.5">
+        <button id="dtab-library" onclick="switchTab('library')"
+                class="rounded-lg border border-sky-500/60 bg-sky-950/80 px-4 py-2 text-sm font-semibold text-sky-50 transition">
+          Canciones y Biblioteca
+        </button>
+        <button id="dtab-audio" onclick="switchTab('audio')"
+                class="rounded-lg border border-transparent px-4 py-2 text-sm font-semibold text-zenith-muted transition hover:text-sky-100">
+          Salida, Motor, DSD y EQ
+        </button>
+      </div>
+
+      <!-- LIBRARY VIEW -->
+      <section id="view-library" class="hidden flex-col gap-4">
+        <div class="rounded-2xl border border-zenith-border bg-gradient-to-b from-zenith-card/95 to-zenith-panel/98 p-4 shadow-xl sm:p-5">
+          <div class="mb-3 flex items-center justify-between gap-2">
+            <span class="text-[11px] font-bold uppercase tracking-widest text-sky-400/80">Biblioteca cargada</span>
+            <span id="libCounter" class="rounded-full border border-sky-900/70 bg-zenith-panel px-2.5 py-0.5 font-mono text-[11px] font-semibold text-sky-300">0 pistas</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 fill-sky-400/70" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              <input id="libSearch" type="search" oninput="onSearchInput()"
+                     placeholder="Buscar canción, álbum o formato..."
+                     class="w-full rounded-xl border border-sky-900/80 bg-[#030A12] py-2.5 pl-9 pr-3 text-sm text-sky-50 placeholder-sky-400/45 outline-none transition focus:border-zenith-cyan focus:ring-2 focus:ring-sky-500/20" />
+            </div>
+            <button onclick="clearSearch()" title="Limpiar búsqueda"
+                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sky-900/80 bg-zenith-surface text-sm font-bold text-sky-300 transition hover:border-sky-500/60 active:scale-95">
+              ✕
+            </button>
+          </div>
+
+          <!-- Filter Pills -->
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button id="flt-all" onclick="setFilter('all')"
+                    class="rounded-full border border-zenith-cyan bg-sky-950 px-3.5 py-1.5 text-xs font-semibold text-sky-50 transition">
+              Todas
+            </button>
+            <button id="flt-dsd" onclick="setFilter('dsd')"
+                    class="rounded-full border border-sky-900/80 bg-zenith-panel px-3.5 py-1.5 text-xs font-semibold text-zenith-muted transition hover:text-sky-100">
+              DSD
+            </button>
+            <button id="flt-hires" onclick="setFilter('hires')"
+                    class="rounded-full border border-sky-900/80 bg-zenith-panel px-3.5 py-1.5 text-xs font-semibold text-zenith-muted transition hover:text-sky-100">
+              Hi-Res PCM
+            </button>
+          </div>
+
+          <!-- Track List -->
+          <div id="trackList" class="mt-3.5 flex flex-col gap-1.5"></div>
+
+          <div id="loadMoreWrap" class="mt-4 hidden text-center">
+            <button onclick="loadLibrary(true)"
+                    class="rounded-xl border border-sky-800/80 bg-zenith-surface px-4 py-2 text-xs font-semibold text-sky-200 transition hover:border-zenith-cyan active:scale-95">
+              Cargar más pistas
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- AUDIO / OUTPUT / ENGINE / DSD / EQ VIEW -->
+      <section id="view-audio" class="hidden flex-col gap-4">
+
+        <!-- Output Devices -->
+        <div class="rounded-2xl border border-zenith-border bg-gradient-to-b from-zenith-card/95 to-zenith-panel/98 p-4 shadow-xl sm:p-5">
+          <div class="mb-3 flex items-center justify-between gap-2">
+            <span class="text-[11px] font-bold uppercase tracking-widest text-sky-400/80">Salida de audio</span>
+            <button onclick="sendAction('refresh_devices')"
+                    class="rounded-lg border border-sky-800/80 bg-zenith-surface px-2.5 py-1 text-[11px] font-semibold text-sky-200 transition hover:border-zenith-cyan active:scale-95">
+              Actualizar
+            </button>
+          </div>
+          <div id="deviceList" class="flex flex-col gap-2"></div>
+        </div>
+
+        <!-- Engine & Exclusive -->
+        <div class="rounded-2xl border border-zenith-border bg-gradient-to-b from-zenith-card/95 to-zenith-panel/98 p-4 shadow-xl sm:p-5">
+          <div class="mb-3 text-[11px] font-bold uppercase tracking-widest text-sky-400/80">Motor y Modo Exclusivo</div>
+          <div id="backendGrid" class="grid grid-cols-2 gap-2"></div>
+
+          <div id="asioDriverWrap" class="mt-3.5 hidden">
+            <label for="asioSelect" class="mb-1.5 block text-[11px] font-semibold text-zenith-muted">Driver ASIO activo</label>
+            <select id="asioSelect" onchange="onAsioDriverChange()"
+                    class="w-full rounded-xl border border-sky-900/80 bg-[#030A12] px-3 py-2.5 text-sm text-sky-50 outline-none focus:border-zenith-cyan">
+            </select>
+          </div>
+
+          <div class="mt-4 flex items-center justify-between gap-3 border-t border-zenith-border/80 pt-3.5">
+            <div class="min-w-0">
+              <div class="text-sm font-semibold text-sky-50">Modo Exclusivo WASAPI</div>
+              <div id="dacHint" class="mt-0.5 text-[11px] text-zenith-muted">Protección DAC activa</div>
+            </div>
+            <button id="exclusiveSwitch" onclick="toggleExclusive()" aria-label="Modo Exclusivo" class="z-switch"></button>
+          </div>
+        </div>
+
+        <!-- DSD Settings -->
+        <div class="rounded-2xl border border-zenith-border bg-gradient-to-b from-zenith-card/95 to-zenith-panel/98 p-4 shadow-xl sm:p-5">
+          <div class="mb-3 text-[11px] font-bold uppercase tracking-widest text-sky-400/80">Configuración DSD</div>
+
+          <label for="dsdModeSelect" class="mb-1.5 block text-[11px] font-semibold text-zenith-muted">Modo de salida DSD</label>
+          <select id="dsdModeSelect" onchange="sendDsdConfig()"
+                  class="w-full rounded-xl border border-sky-900/80 bg-[#030A12] px-3 py-2.5 text-sm text-sky-50 outline-none focus:border-zenith-cyan">
+            <option value="0">PCM FIR de fase lineal (universal)</option>
+            <option value="1">DoP Exclusivo (DSD sobre PCM)</option>
+            <option value="2">Solo DSD nativo (ASIO / BASS / MPV)</option>
+          </select>
+
+          <div class="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label for="dsdGainSelect" class="mb-1.5 block text-[11px] font-semibold text-zenith-muted">Ganancia SACD</label>
+              <select id="dsdGainSelect" onchange="sendDsdConfig()"
+                      class="w-full rounded-xl border border-sky-900/80 bg-[#030A12] px-3 py-2.5 text-sm text-sky-50 outline-none focus:border-zenith-cyan">
+                <option value="0">+0 dB (Ref)</option>
+                <option value="3">+3 dB</option>
+                <option value="6">+6 dB (Estándar)</option>
+              </select>
+            </div>
+            <div>
+              <label for="dsdRateSelect" class="mb-1.5 block text-[11px] font-semibold text-zenith-muted">Frecuencia PCM</label>
+              <select id="dsdRateSelect" onchange="sendDsdConfig()"
+                      class="w-full rounded-xl border border-sky-900/80 bg-[#030A12] px-3 py-2.5 text-sm text-sky-50 outline-none focus:border-zenith-cyan">
+                <option value="0">Automática</option>
+                <option value="44100">44.1 kHz</option>
+                <option value="88200">88.2 kHz</option>
+                <option value="176400">176.4 kHz</option>
+                <option value="352800">352.8 kHz</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tone / Biquad EQ -->
+        <div class="rounded-2xl border border-zenith-border bg-gradient-to-b from-zenith-card/95 to-zenith-panel/98 p-4 shadow-xl sm:p-5">
+          <div class="mb-3 flex items-center justify-between gap-2">
+            <span class="text-[11px] font-bold uppercase tracking-widest text-sky-400/80">Control de tono / EQ</span>
+            <span id="dspStateLabel" class="rounded-full border border-sky-900/70 bg-zenith-panel px-2.5 py-0.5 text-[11px] font-semibold text-sky-300">Bypass</span>
+          </div>
+
+          <div class="mb-3.5 flex flex-wrap gap-1.5">
+            <button onclick="applyTonePreset('puro')" class="rounded-full border border-sky-800/80 bg-zenith-surface px-3 py-1 text-xs font-semibold text-sky-200 transition hover:border-zenith-cyan active:scale-95">Puro</button>
+            <button onclick="applyTonePreset('calido')" class="rounded-full border border-sky-800/80 bg-zenith-surface px-3 py-1 text-xs font-semibold text-sky-200 transition hover:border-zenith-cyan active:scale-95">Cálido</button>
+            <button onclick="applyTonePreset('voces')" class="rounded-full border border-sky-800/80 bg-zenith-surface px-3 py-1 text-xs font-semibold text-sky-200 transition hover:border-zenith-cyan active:scale-95">Voces</button>
+            <button onclick="applyTonePreset('aireado')" class="rounded-full border border-sky-800/80 bg-zenith-surface px-3 py-1 text-xs font-semibold text-sky-200 transition hover:border-zenith-cyan active:scale-95">Aireado</button>
+            <button onclick="applyTonePreset('estudio')" class="rounded-full border border-sky-800/80 bg-zenith-surface px-3 py-1 text-xs font-semibold text-sky-200 transition hover:border-zenith-cyan active:scale-95">Estudio</button>
+          </div>
+
+          <div class="space-y-2.5 border-b border-zenith-border/70 pb-3.5">
+            <div class="flex items-center justify-between gap-3">
+              <span class="text-sm font-medium text-sky-100">Bypass bit-transparente</span>
+              <button id="bypassSwitch" onclick="toggleBypass()" class="z-switch"></button>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <span class="text-sm font-medium text-sky-100">Ecualizador biquad activo</span>
+              <button id="eqSwitch" onclick="toggleEq()" class="z-switch"></button>
+            </div>
+          </div>
+
+          <div class="mt-3.5 space-y-2.5">
+            <div>
+              <div class="flex justify-between text-xs text-sky-200"><span>Preamp</span><span id="valPreamp" class="font-mono text-zenith-sky">0.0 dB</span></div>
+              <input id="eqPreamp" type="range" min="-12" max="12" step="0.5" value="0" class="zenith-range" />
+            </div>
+            <div>
+              <div class="flex justify-between text-xs text-sky-200"><span>Sub-graves (85 Hz)</span><span id="valSub" class="font-mono text-zenith-sky">0.0 dB</span></div>
+              <input id="eqSub" type="range" min="-6" max="6" step="0.5" value="0" class="zenith-range" />
+            </div>
+            <div>
+              <div class="flex justify-between text-xs text-sky-200"><span>Presencia (2.8 kHz)</span><span id="valPres" class="font-mono text-zenith-sky">0.0 dB</span></div>
+              <input id="eqPres" type="range" min="-6" max="6" step="0.5" value="0" class="zenith-range" />
+            </div>
+            <div>
+              <div class="flex justify-between text-xs text-sky-200"><span>Aire (11 kHz)</span><span id="valAir" class="font-mono text-zenith-sky">0.0 dB</span></div>
+              <input id="eqAir" type="range" min="-6" max="6" step="0.5" value="0" class="zenith-range" />
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- MOBILE BOTTOM NAVIGATION BAR -->
+  <nav class="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-zenith-border bg-zenith-panel/92 px-2 pt-1.5 backdrop-blur-xl lg:hidden"
+       style="padding-bottom: calc(8px + var(--safe-bottom));">
+    <button id="nav-now" onclick="switchTab('now')"
+            class="flex flex-col items-center gap-1 rounded-xl bg-sky-500/10 py-1.5 text-[11px] font-semibold text-zenith-cyan transition">
+      <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+      <span>Ahora</span>
+    </button>
+    <button id="nav-library" onclick="switchTab('library')"
+            class="flex flex-col items-center gap-1 rounded-xl py-1.5 text-[11px] font-semibold text-zenith-muted transition">
+      <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2zm13 0v5l4-2.5L17 16z"/></svg>
+      <span>Canciones</span>
+    </button>
+    <button id="nav-audio" onclick="switchTab('audio')"
+            class="flex flex-col items-center gap-1 rounded-xl py-1.5 text-[11px] font-semibold text-zenith-muted transition">
+      <svg class="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+      <span>Audio</span>
+    </button>
+  </nav>
+
+  <!-- OPTIONAL PIN OVERLAY -->
+  <div id="pinOverlay" class="fixed inset-0 z-50 hidden place-items-center bg-black/85 p-5 backdrop-blur-md">
+    <div class="flex w-full max-w-xs flex-col gap-3 rounded-2xl border border-sky-700/80 bg-zenith-panel p-5 text-center shadow-2xl">
+      <div class="text-lg font-bold text-white">Zenith Audio Remoto</div>
+      <p class="text-xs text-zenith-muted">Ingresa el PIN configurado en Zenith Audio para controlar el reproductor.</p>
+      <input id="pinInput" type="password" inputmode="numeric" placeholder="PIN de acceso"
+             onkeydown="if(event.key==='Enter')submitPin()"
+             class="w-full rounded-xl border border-sky-800 bg-[#030A12] px-3.5 py-2.5 text-center text-sm text-white outline-none focus:border-zenith-cyan" />
+      <button onclick="submitPin()"
+              class="rounded-xl border border-sky-400/80 bg-sky-700 px-4 py-2.5 text-sm font-bold text-white shadow-glow transition hover:bg-sky-600 active:scale-95">
+        Desbloquear
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let state = null;
+    let activeTab = window.innerWidth >= 1024 ? 'library' : 'now';
+    let libFilter = 'all';
+    let libOffset = 0;
+    let libItems = [];
+    let lastCoverKey = '';
+    let lastLibraryTotal = -1;
+    let lastDevicesSig = '';
+    let lastBackendsSig = '';
+    let lastAsioSig = '';
+    let draggingSeek = false;
+    let draggingVol = false;
+    let draggingEq = false;
+    let lastNonZeroVolume = 80;
+    let searchTimer = null;
+    let volTimer = null;
+    let eqTimer = null;
+    let toastTimer = null;
+    let pin = localStorage.getItem('zenith_remote_pin') || '';
+
+    const vuStrip = document.getElementById('vuStrip');
+    for (let i = 0; i < 20; i++) {
+      const bar = document.createElement('div');
+      bar.className = 'vu-bar h-1 rounded-full bg-gradient-to-t from-sky-500 to-cyan-200 opacity-25';
+      vuStrip.appendChild(bar);
+    }
+
+    function authHeaders(extra = {}) {
+      const h = Object.assign({}, extra);
+      if (pin) h['X-Zenith-Pin'] = pin;
+      return h;
+    }
+
+    function showToast(msg, isError = false) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className =
+        'pointer-events-none fixed left-1/2 top-16 z-50 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl px-4 py-2 text-center text-xs font-semibold shadow-2xl backdrop-blur-md transition-all duration-200 opacity-100 translate-y-0 border ' +
+        (isError
+          ? 'border-rose-400/80 bg-rose-950/95 text-rose-100'
+          : 'border-sky-400/80 bg-sky-950/95 text-sky-50');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        el.classList.remove('opacity-100', 'translate-y-0');
+        el.classList.add('opacity-0', '-translate-y-4');
+      }, 2400);
+    }
+
+    function setSliderFill(el) {
+      const min = parseFloat(el.min || '0');
+      const max = parseFloat(el.max || '100');
+      const val = parseFloat(el.value || '0');
+      const pct = max > min ? ((val - min) * 100) / (max - min) : 0;
+      el.style.setProperty('--val', pct.toFixed(1) + '%');
+    }
+
+    function fmtTime(sec) {
+      sec = Math.max(0, Math.floor(sec || 0));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return m + ':' + String(s).padStart(2, '0');
+    }
+
+    function fmtDb(v) {
+      const n = Number(v || 0);
+      return (n > 0 ? '+' : '') + n.toFixed(1) + ' dB';
+    }
+
+    function switchTab(tab) {
+      const isDesktop = window.innerWidth >= 1024;
+      if (isDesktop && tab === 'now') tab = 'library';
+      activeTab = tab;
+
+      const viewNow = document.getElementById('view-now');
+      const viewLib = document.getElementById('view-library');
+      const viewAudio = document.getElementById('view-audio');
+
+      if (isDesktop) {
+        viewNow.classList.remove('hidden');
+        viewNow.classList.add('flex');
+      } else {
+        viewNow.classList.toggle('hidden', tab !== 'now');
+        viewNow.classList.toggle('flex', tab === 'now');
+      }
+
+      viewLib.classList.toggle('hidden', tab !== 'library');
+      viewLib.classList.toggle('flex', tab === 'library');
+      viewAudio.classList.toggle('hidden', tab !== 'audio');
+      viewAudio.classList.toggle('flex', tab === 'audio');
+
+      ['now', 'library', 'audio'].forEach(t => {
+        const nb = document.getElementById('nav-' + t);
+        if (!nb) return;
+        const active = t === tab;
+        nb.className = 'flex flex-col items-center gap-1 rounded-xl py-1.5 text-[11px] font-semibold transition ' +
+          (active ? 'bg-sky-500/15 text-zenith-cyan' : 'text-zenith-muted');
+      });
+
+      ['library', 'audio'].forEach(t => {
+        const db = document.getElementById('dtab-' + t);
+        if (!db) return;
+        const active = t === tab;
+        db.className = 'rounded-lg px-4 py-2 text-sm font-semibold transition border ' +
+          (active
+            ? 'border-sky-500/60 bg-sky-950/85 text-sky-50 shadow-glow'
+            : 'border-transparent text-zenith-muted hover:text-sky-100');
+      });
+
+      if (tab === 'library' && libItems.length === 0) {
+        loadLibrary(false);
+      }
+    }
+
+    window.addEventListener('resize', () => {
+      switchTab(activeTab);
+    });
+
+    async function apiFetch(url, options = {}) {
+      options.headers = authHeaders(options.headers || {});
+      const res = await fetch(url, options);
+      const pinModal = document.getElementById('pinOverlay');
+      if (res.status === 401) {
+        pinModal.classList.remove('hidden');
+        pinModal.classList.add('grid');
+        throw new Error('PIN requerido');
+      }
+      pinModal.classList.add('hidden');
+      pinModal.classList.remove('grid');
+      return res;
+    }
+
+    async function submitPin() {
+      pin = document.getElementById('pinInput').value.trim();
+      localStorage.setItem('zenith_remote_pin', pin);
+      try {
+        await pollState();
+        loadLibrary(false);
+        showToast('Acceso concedido');
+      } catch {
+        showToast('PIN incorrecto', true);
+      }
+    }
+
+    async function sendAction(action, extra = {}, silent = false) {
+      try {
+        const res = await apiFetch('/api/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({ action }, extra))
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          showToast(data.message || 'Acción rechazada', true);
+        } else if (!silent && data.message) {
+          showToast(data.message);
+        }
+        await pollState();
+        return data;
+      } catch (e) {
+        if (e.message !== 'PIN requerido') showToast('Sin conexión con Zenith Audio', true);
+        return null;
+      }
+    }
+
+    async function pollState() {
+      const pill = document.getElementById('livePill');
+      const dot = document.getElementById('liveDot');
+      const lbl = document.getElementById('liveLabel');
+      try {
+        const res = await apiFetch('/api/state');
+        const s = await res.json();
+        state = s;
+        pill.className = 'inline-flex shrink-0 items-center gap-2 rounded-full border border-sky-800/80 bg-zenith-card/90 px-3 py-1.5 text-[11px] font-semibold text-sky-200';
+        dot.className = 'h-2 w-2 rounded-full bg-zenith-mint shadow-[0_0_8px_#38E3A5] animate-pulse';
+        lbl.textContent = s.isPlaying && !s.isPaused ? 'En vivo' : 'Conectado';
+        renderState(s);
+      } catch (e) {
+        if (e.message !== 'PIN requerido') {
+          pill.className = 'inline-flex shrink-0 items-center gap-2 rounded-full border border-rose-800/80 bg-rose-950/70 px-3 py-1.5 text-[11px] font-semibold text-rose-200';
+          dot.className = 'h-2 w-2 rounded-full bg-rose-400';
+          lbl.textContent = 'Reconectando';
+        }
+      }
+    }
+
+    function renderState(s) {
+      if (s.accentHex) document.documentElement.style.setProperty('--accent', s.accentHex);
+      document.getElementById('hostSub').textContent = s.serverHostName ? (s.serverHostName + ' · Wi-Fi LAN') : 'Control remoto LAN';
+      document.getElementById('trackTitle').textContent = s.trackTitle || 'Sin pista cargada';
+      document.getElementById('trackSubtitle').textContent = s.trackSubtitle || 'Selecciona una canción';
+      document.getElementById('lyricLine').textContent = s.activeLyricLine || '';
+      document.getElementById('transportBadge').textContent = s.transportBadge || 'LISTO';
+      document.getElementById('bitrateBadge').textContent = s.bitrate && s.bitrate !== '--' ? s.bitrate : (s.codec || 'HI-RES');
+
+      document.getElementById('codecPill').textContent = s.codec || 'PCM';
+      document.getElementById('ratePill').textContent = [s.sampleRate, s.bitDepth].filter(Boolean).join(' · ') || '--';
+      document.getElementById('enginePill').textContent = s.backendName || 'WASAPI';
+      document.getElementById('outputPill').textContent = s.outputPath || 'Salida';
+
+      const coverKey = s.hasCover ? ('cover-' + s.coverVersion) : 'brand-logo';
+      if (coverKey !== lastCoverKey) {
+        lastCoverKey = coverKey;
+        const img = document.getElementById('coverImg');
+        if (s.hasCover) {
+          const pinQuery = pin ? '&pin=' + encodeURIComponent(pin) : '';
+          img.className = 'h-full w-full object-cover transition-all duration-300';
+          img.src = '/api/cover?v=' + s.coverVersion + '&t=' + Date.now() + pinQuery;
+        } else {
+          img.className = 'h-full w-full p-5 object-contain transition-all duration-300';
+          img.src = '/logo.png?v=3';
+        }
+      }
+
+      const icon = document.getElementById('playPauseIcon');
+      if (s.isPlaying && !s.isPaused) {
+        icon.innerHTML = '<rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/>';
+      } else {
+        icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+      }
+
+      const shuf = document.getElementById('btnShuffle');
+      shuf.className = 'flex h-11 w-11 items-center justify-center rounded-full border transition active:scale-95 ' +
+        (s.shuffle
+          ? 'border-zenith-cyan bg-sky-900/80 text-white shadow-glow'
+          : 'border-sky-900/90 bg-zenith-surface text-sky-300/80 hover:border-sky-500/60');
+
+      // Live VU visualizer
+      const bars = vuStrip.children;
+      const lvl = s.isPlaying && !s.isPaused ? Math.max(0.08, Math.min(1, s.vuLevel || 0)) : 0;
+      for (let i = 0; i < bars.length; i++) {
+        const centerWeight = 1 - Math.abs(i - 9.5) / 11;
+        const jitter = lvl > 0 ? (0.52 + Math.random() * 0.48) : 0;
+        const h = lvl > 0 ? Math.max(4, Math.round(20 * lvl * centerWeight * jitter)) : 3;
+        bars[i].style.height = h + 'px';
+        bars[i].style.opacity = lvl > 0 ? (0.4 + 0.6 * centerWeight) : 0.2;
+      }
+
+      // Timeline
+      const seek = document.getElementById('seekSlider');
+      const maxDur = Math.max(1, s.durationSeconds || 1);
+      if (!draggingSeek) {
+        seek.max = maxDur;
+        seek.value = Math.min(maxDur, Math.max(0, s.positionSeconds || 0));
+        setSliderFill(seek);
+        document.getElementById('curTime').textContent = s.currentTimeText || fmtTime(s.positionSeconds);
+      }
+      document.getElementById('durTime').textContent = s.durationText || fmtTime(s.durationSeconds);
+
+      // Volume
+      const vol = document.getElementById('volSlider');
+      vol.disabled = !!s.volumeLocked;
+      if (!draggingVol) {
+        vol.value = Math.round(s.volume ?? 100);
+        setSliderFill(vol);
+        if ((s.volume ?? 0) > 0) lastNonZeroVolume = Math.round(s.volume);
+      }
+      document.getElementById('volLabel').textContent = s.volumeLabel || (Math.round(s.volume ?? 100) + '%');
+      const muteBtn = document.getElementById('btnMute');
+      const isMuted = (s.volume ?? 100) <= 0;
+      muteBtn.className = 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-xs font-bold transition active:scale-95 ' +
+        (isMuted ? 'border-zenith-cyan bg-sky-900 text-white' : 'border-sky-900/90 bg-zenith-surface text-sky-200');
+
+      // Library counters
+      document.getElementById('flt-all').textContent = 'Todas (' + (s.totalLibraryTracks || 0) + ')';
+      document.getElementById('flt-dsd').textContent = 'DSD (' + (s.dsdTracksCount || 0) + ')';
+      document.getElementById('flt-hires').textContent = 'Hi-Res (' + (s.hiResTracksCount || 0) + ')';
+      if (s.totalLibraryTracks !== lastLibraryTotal) {
+        lastLibraryTotal = s.totalLibraryTracks;
+        if (activeTab === 'library' || window.innerWidth >= 1024) loadLibrary(false);
+      }
+      highlightCurrentTrack(s.trackPath);
+
+      // Output devices
+      const devicesSig = JSON.stringify(s.outputDevices || []);
+      if (devicesSig !== lastDevicesSig) {
+        lastDevicesSig = devicesSig;
+        const devList = document.getElementById('deviceList');
+        devList.innerHTML = '';
+        (s.outputDevices || []).forEach(d => {
+          const btn = document.createElement('button');
+          btn.onclick = () => sendAction('set_output', { index: d.index });
+          btn.className = 'flex w-full items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 text-left transition active:scale-[0.99] ' +
+            (d.isSelected
+              ? 'border-zenith-cyan bg-sky-950/90 text-white shadow-glow'
+              : 'border-zenith-border bg-[#050F1A] text-sky-100 hover:border-sky-700');
+          const tagClass = d.isDedicatedDac
+            ? 'border-sky-400/70 bg-sky-900/80 text-sky-100'
+            : 'border-sky-900/80 bg-zenith-panel text-sky-300';
+          btn.innerHTML = `<span class="truncate text-xs font-semibold sm:text-sm">${esc(d.name)}</span><span class="shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${tagClass}">${esc(d.kindLabel)}</span>`;
+          devList.appendChild(btn);
+        });
+      }
+
+      // Backends
+      const backendsSig = JSON.stringify(s.backends || []);
+      if (backendsSig !== lastBackendsSig) {
+        lastBackendsSig = backendsSig;
+        const bg = document.getElementById('backendGrid');
+        bg.innerHTML = '';
+        (s.backends || []).forEach(b => {
+          const btn = document.createElement('button');
+          btn.textContent = b.name;
+          btn.onclick = () => sendAction('set_backend', { index: b.index });
+          btn.className = 'rounded-xl border px-3 py-2.5 text-center text-xs font-semibold transition active:scale-95 ' +
+            (b.isSelected
+              ? 'border-zenith-cyan bg-sky-950/90 text-white shadow-glow'
+              : 'border-zenith-border bg-[#05101B] text-zenith-muted hover:border-sky-700 hover:text-sky-100');
+          bg.appendChild(btn);
+        });
+      }
+
+      // ASIO driver
+      const asioWrap = document.getElementById('asioDriverWrap');
+      const asioSel = document.getElementById('asioSelect');
+      const showAsio = (s.asioDrivers || []).length > 0 && s.backendIndex === 1;
+      asioWrap.classList.toggle('hidden', !showAsio);
+      if (showAsio) {
+        const asioSig = JSON.stringify(s.asioDrivers || []);
+        if (asioSig !== lastAsioSig && document.activeElement !== asioSel) {
+          lastAsioSig = asioSig;
+          asioSel.innerHTML = s.asioDrivers.map(a => `<option value="${a.index}" ${a.isSelected ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+        }
+      }
+
+      // Exclusive mode
+      document.getElementById('exclusiveSwitch').classList.toggle('on', !!s.exclusiveMode);
+      document.getElementById('dacHint').textContent = s.hasDedicatedDac
+        ? 'DAC dedicado detectado · Exclusivo disponible'
+        : 'Salida sin driver DAC dedicado · Exclusivo bloqueado por seguridad';
+
+      // DSD selects
+      const dsdModeSel = document.getElementById('dsdModeSelect');
+      if (document.activeElement !== dsdModeSel) dsdModeSel.value = String(s.dsdModeIndex ?? 0);
+      const dsdGainSel = document.getElementById('dsdGainSelect');
+      if (document.activeElement !== dsdGainSel) dsdGainSel.value = String(Math.round(s.dsdGainDb ?? 6));
+      const dsdRateSel = document.getElementById('dsdRateSelect');
+      if (document.activeElement !== dsdRateSel) dsdRateSel.value = String(s.dsdPcmRate ?? 0);
+
+      // Tone / EQ
+      document.getElementById('bypassSwitch').classList.toggle('on', !!s.dspBypass);
+      document.getElementById('eqSwitch').classList.toggle('on', !!s.eqEnabled);
+      document.getElementById('dspStateLabel').textContent = s.dspBypass ? 'Bypass puro' : (s.eqEnabled ? 'EQ activo' : 'Plano');
+
+      if (!draggingEq) {
+        setEqControl('eqPreamp', 'valPreamp', s.preampDb);
+        setEqControl('eqSub', 'valSub', s.subBassDb);
+        setEqControl('eqPres', 'valPres', s.presenceDb);
+        setEqControl('eqAir', 'valAir', s.airDb);
+      }
+    }
+
+    function setEqControl(id, labelId, val) {
+      const el = document.getElementById(id);
+      el.value = Number(val || 0);
+      setSliderFill(el);
+      document.getElementById(labelId).textContent = fmtDb(val);
+    }
+
+    // Seek events
+    const seekEl = document.getElementById('seekSlider');
+    seekEl.addEventListener('pointerdown', () => draggingSeek = true);
+    seekEl.addEventListener('input', () => {
+      draggingSeek = true;
+      setSliderFill(seekEl);
+      document.getElementById('curTime').textContent = fmtTime(seekEl.value);
+    });
+    seekEl.addEventListener('change', () => {
+      draggingSeek = false;
+      sendAction('seek', { seconds: parseFloat(seekEl.value) }, true);
+    });
+
+    // Volume events
+    const volEl = document.getElementById('volSlider');
+    volEl.addEventListener('pointerdown', () => draggingVol = true);
+    volEl.addEventListener('input', () => {
+      draggingVol = true;
+      setSliderFill(volEl);
+      document.getElementById('volLabel').textContent = volEl.value + '%';
+      clearTimeout(volTimer);
+      volTimer = setTimeout(() => sendAction('volume', { value: parseFloat(volEl.value) }, true), 80);
+    });
+    volEl.addEventListener('change', () => {
+      draggingVol = false;
+      clearTimeout(volTimer);
+      sendAction('volume', { value: parseFloat(volEl.value) }, true);
+    });
+
+    function nudgeVolume(delta) {
+      if (state && state.volumeLocked) {
+        showToast('Volumen fijo en modo bit-perfect DSD', true);
+        return;
+      }
+      const next = Math.max(0, Math.min(100, Math.round((state ? state.volume : 100) + delta)));
+      volEl.value = next;
+      setSliderFill(volEl);
+      document.getElementById('volLabel').textContent = next + '%';
+      sendAction('volume', { value: next }, true);
+    }
+
+    function toggleMute() {
+      if (state && state.volumeLocked) return;
+      const cur = state ? Math.round(state.volume) : 100;
+      const target = cur > 0 ? 0 : Math.max(20, lastNonZeroVolume || 80);
+      if (cur > 0) lastNonZeroVolume = cur;
+      sendAction('volume', { value: target }, true);
+    }
+
+    // EQ sliders
+    [['eqPreamp', 'valPreamp'], ['eqSub', 'valSub'], ['eqPres', 'valPres'], ['eqAir', 'valAir']].forEach(([id, lbl]) => {
+      const el = document.getElementById(id);
+      el.addEventListener('pointerdown', () => draggingEq = true);
+      el.addEventListener('input', () => {
+        draggingEq = true;
+        setSliderFill(el);
+        document.getElementById(lbl).textContent = fmtDb(el.value);
+        clearTimeout(eqTimer);
+        eqTimer = setTimeout(sendEqSliders, 140);
+      });
+      el.addEventListener('change', () => {
+        draggingEq = false;
+        clearTimeout(eqTimer);
+        sendEqSliders();
+      });
+    });
+
+    function sendEqSliders() {
+      sendAction('set_tone', {
+        eqEnabled: true,
+        dspBypass: false,
+        preamp: parseFloat(document.getElementById('eqPreamp').value),
+        subBass: parseFloat(document.getElementById('eqSub').value),
+        presence: parseFloat(document.getElementById('eqPres').value),
+        air: parseFloat(document.getElementById('eqAir').value)
+      }, true);
+    }
+
+    function toggleBypass() {
+      const next = !(state && state.dspBypass);
+      sendAction('set_tone', { dspBypass: next, eqEnabled: next ? false : (state ? state.eqEnabled : false) });
+    }
+
+    function toggleEq() {
+      const next = !(state && state.eqEnabled);
+      sendAction('set_tone', { eqEnabled: next, dspBypass: next ? false : (state ? state.dspBypass : true) });
+    }
+
+    function applyTonePreset(preset) {
+      sendAction('set_tone', { preset });
+    }
+
+    function toggleExclusive() {
+      const next = !(state && state.exclusiveMode);
+      sendAction('set_exclusive', { enabled: next });
+    }
+
+    function onAsioDriverChange() {
+      const idx = parseInt(document.getElementById('asioSelect').value, 10);
+      sendAction('set_asio_driver', { index: idx });
+    }
+
+    function sendDsdConfig() {
+      sendAction('set_dsd', {
+        mode: parseInt(document.getElementById('dsdModeSelect').value, 10),
+        gain: parseFloat(document.getElementById('dsdGainSelect').value),
+        rate: parseInt(document.getElementById('dsdRateSelect').value, 10)
+      });
+    }
+
+    // Library
+    function setFilter(f) {
+      libFilter = f;
+      ['all', 'dsd', 'hires'].forEach(k => {
+        const el = document.getElementById('flt-' + k);
+        const active = k === f;
+        el.className = 'rounded-full border px-3.5 py-1.5 text-xs font-semibold transition ' +
+          (active
+            ? 'border-zenith-cyan bg-sky-950 text-sky-50 shadow-glow'
+            : 'border-sky-900/80 bg-zenith-panel text-zenith-muted hover:text-sky-100');
+      });
+      loadLibrary(false);
+    }
+
+    function onSearchInput() {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => loadLibrary(false), 220);
+    }
+
+    function clearSearch() {
+      document.getElementById('libSearch').value = '';
+      loadLibrary(false);
+    }
+
+    async function loadLibrary(append) {
+      if (!append) { libOffset = 0; libItems = []; }
+      const q = encodeURIComponent(document.getElementById('libSearch').value.trim());
+      try {
+        const res = await apiFetch(`/api/library?q=${q}&filter=${libFilter}&offset=${libOffset}&limit=80`);
+        const data = await res.json();
+        libItems = append ? libItems.concat(data.items || []) : (data.items || []);
+        libOffset = libItems.length;
+        document.getElementById('libCounter').textContent = `${data.matchedCount} / ${data.totalLibraryCount} pistas`;
+        renderLibrary(data.hasMore);
+      } catch { }
+    }
+
+    function renderLibrary(hasMore) {
+      const wrap = document.getElementById('trackList');
+      const moreWrap = document.getElementById('loadMoreWrap');
+      if (!libItems.length) {
+        wrap.innerHTML = '<div class="py-8 text-center text-xs text-zenith-muted">No hay pistas que coincidan. Carga una carpeta en Zenith Audio en tu PC.</div>';
+        moreWrap.classList.add('hidden');
+        return;
+      }
+
+      const curPath = state ? (state.trackPath || '').toLowerCase() : '';
+      wrap.innerHTML = '';
+      libItems.forEach(t => {
+        const btn = document.createElement('button');
+        const isCur = t.isCurrent || (curPath && t.path.toLowerCase() === curPath);
+        const isDsd = ['.dsf', '.dff', '.iso'].includes((t.extension || '').toLowerCase());
+        btn.dataset.path = t.path.toLowerCase();
+        btn.onclick = () => sendAction('play_track', { path: t.path });
+        btn.className = 'track-item grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-xl border px-3.5 py-2.5 text-left transition active:scale-[0.99] ' +
+          (isCur
+            ? 'border-zenith-cyan bg-sky-950/90 shadow-[inset_3px_0_0_#46BFFF]'
+            : 'border-zenith-border/80 bg-[#050E18] hover:border-sky-700/80');
+
+        const badgeClass = isDsd
+          ? 'border-sky-400/70 bg-sky-900/80 text-sky-100'
+          : 'border-sky-900/90 bg-[#072035] text-sky-300';
+
+        btn.innerHTML = `
+          <div class="min-w-0">
+            <div class="truncate text-sm font-semibold text-sky-50">${esc(t.title)}</div>
+            <div class="mt-0.5 truncate text-[11px] text-zenith-muted">${esc(t.folder || '')}</div>
+          </div>
+          <span class="rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase ${badgeClass}">${esc(t.format || 'AUDIO')}</span>`;
+        wrap.appendChild(btn);
+      });
+      moreWrap.classList.toggle('hidden', !hasMore);
+    }
+
+    function highlightCurrentTrack(trackPath) {
+      if (!trackPath) return;
+      const low = trackPath.toLowerCase();
+      document.querySelectorAll('.track-item').forEach(el => {
+        const isCur = el.dataset.path === low;
+        el.classList.toggle('border-zenith-cyan', isCur);
+        el.classList.toggle('bg-sky-950/90', isCur);
+        el.classList.toggle('shadow-[inset_3px_0_0_#46BFFF]', isCur);
+        el.classList.toggle('border-zenith-border/80', !isCur);
+        el.classList.toggle('bg-[#050E18]', !isCur);
+      });
+    }
+
+    function esc(str) {
+      return String(str ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+    }
+
+    switchTab(activeTab);
+    pollState();
+    loadLibrary(false);
+    setInterval(pollState, 900);
+  </script>
+</body>
+</html>

@@ -1,6 +1,19 @@
 # Third Party Notices
 
-## Optional native tools
+## NuGet / Managed Libraries
+
+Zenith Audio uses the following open-source .NET libraries restored via NuGet during build:
+
+- **Microsoft Windows App SDK (WinUI 3)** — MIT License
+- **NAudio** (`NAudio`, `NAudio.Wasapi`, `NAudio.Asio`) — MIT License
+- **TagLibSharp** — LGPL-2.1 License
+- **DiscUtils.Iso9660** — MIT License
+
+## Web Remote Styling
+
+- **Tailwind CSS** (loaded via Play CDN in `src/ZenithAudio/Assets/Remote/index.html` for the optional LAN Remote Web UI) — MIT License
+
+## Optional Native Tools
 
 Zenith Audio can use optional native audio tools placed under
 `src/ZenithAudio/runtimes/win-x64/native/`.

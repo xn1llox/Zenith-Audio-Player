@@ -1,11 +1,23 @@
 # Zenith Audio Player
 
-Zenith Audio Player es un reproductor de musica para Windows creado con C#, WinUI 3, XAML y Windows App SDK. El enfoque del proyecto es una mesa de escucha local para usuarios audiofilos: biblioteca propia, FLAC/WAV/Hi-Res PCM, DSD/DSF/DFF, SACD ISO, cadena de senal visible, medidor VU, caratulas, letras y un asistente opcional llamado ZenithAI.
+Zenith Audio Player es un reproductor de musica audiófilo para Windows creado con C#, WinUI 3, XAML y Windows App SDK. Esta disenado como una mesa de escucha local de alta fidelidad: biblioteca masiva (FLAC/WAV/Hi-Res PCM, DSD/DSF/DFF, SACD ISO, CUE), salida **WASAPI** y **ASIO Nativo DSD64/DSD128** estilo foobar2000, cadena de senal visible, medidor VU, ecualizador biquad, caratulas, letras sincronizadas, asistente integrado **ZenithAI** multi-proveedor y **Control Remoto Web por red local (Wi-Fi / LAN)** con Tailwind CSS.
 
 ![Zenith Audio Player](https://github.com/user-attachments/assets/48a8c3c3-3bad-4e4a-a698-935777a93ffb)
 
-**Version actual:** `1.0.7`  
-**Instalador recomendado:** [`ZenithAudio_v1.0.7_Setup_win-x64.exe`](https://github.com/xn1llox/Zenith-Audio-Player/releases/download/v1.0.7/ZenithAudio_v1.0.7_Setup_win-x64.exe)
+**Version actual:** `1.0.8`
+**Instalador recomendado:** [`ZenithAudio_v1.0.8_Setup_win-x64.exe`](https://github.com/xn1llox/Zenith-Audio-Player/releases/download/v1.0.8/ZenithAudio_v1.0.8_Setup_win-x64.exe)
+
+## Novedades de 1.0.8
+
+- Motor de audio estilo foobar2000 con seleccion rapida de dispositivo de salida y cambio en caliente.
+- Nuevo motor **ASIO Nativo (DSD64 / DSD128)** compatible con DACs USB ASIO (incluyendo FiiO / JadeAudio JA11) y selector de driver + panel de control ASIO.
+- Decodificador DSD/DSF/DFF reconstruido con filtro FIR de fase lineal Blackman-Harris, ganancia SACD seleccionable (+0/+3/+6 dB), frecuencias PCM objetivo y DoP Exclusivo con proteccion de seguridad.
+- Modo Exclusivo desactivado por defecto con deteccion de controlador DAC USB dedicado y alerta protectora para evitar ruido blanco en salidas integradas (jack 3.5 mm / headsets).
+- Ecualizador biquad real de 3 bandas + preamp con bypass bit-transparente.
+- Correccion de carga de carpetas de musica grandes (60 GB+) con tolerancia a subcarpetas protegidas, botones rapidos `+ Carpeta` / `Musica Win` y persistencia automatica.
+- Interfaz OLED redisenada con barra superior oscura de Windows 11, iconos vectoriales Hi-Fi de reproduccion, pestanas derechas (`Senal`, `Tono / EQ`, `Ajustes`) y diseno completamente responsivo.
+- **ZenithAI** integrado directamente con el reproductor (mini-reproductor en vivo, control de reproduccion/biblioteca/DAC/ASIO/DSD/EQ) y nuevo menu de 3 vistas (`Chat`, `Acciones`, `Config API`) con 11 proveedores preconfigurados y extraccion universal de modelos (`/v1/models`, `/models`, Ollama `/api/tags`).
+- **Control Remoto Web por red local (Wi-Fi / LAN)** con boton `Remoto` junto a `ZenithAI` para iniciar/detener el servidor y pagina responsiva con Tailwind CSS para controlar pistas, volumen, salida, motor, DSD y EQ desde el telefono.
 
 ## Novedades de 1.0.7
 
@@ -35,72 +47,74 @@ Zenith Audio Player es un reproductor de musica para Windows creado con C#, WinU
 
 ## Caracteristicas
 
-- Interfaz moderna con WinUI 3 para Windows 10 y Windows 11.
-- Dashboard audiofilo con vista de escucha, laboratorio Anti-Fake y letras.
-- Cadena de senal con estado de archivo, decoder, DSP y salida.
-- LED de estado bit-perfect.
-- Medidor VU digital azul estilo equipo hi-fi.
-- Visualizador de audio de fondo.
-- Caratulas desde metadata embebida o archivos `cover.jpg`, `cover.png`, etc.
+- Interfaz OLED moderna y responsiva con WinUI 3, barra de titulo oscura en Windows 11 e iconos vectoriales Hi-Fi de reproduccion.
+- Dashboard audiofilo con vista de escucha, laboratorio Anti-Fake, letras y panel derecho con pestanas (`Senal`, `Tono / EQ`, `Ajustes`).
+- Cadena de senal con estado de archivo, decoder, DSP, salida y LED de estado bit-perfect.
+- Medidor VU digital azul estilo equipo hi-fi y visualizador de audio en vivo.
+- Caratulas desde metadata embebida o archivos `cover.jpg`, `cover.png`, `folder.jpg`, etc., con acento dinamico.
 - Letras sincronizadas `.lrc` y letras simples `.txt`.
-- Escaneo de biblioteca local con buscador.
-- Doble click en biblioteca para reproducir.
-- Controles de reproduccion con anterior, siguiente, pausa, stop, aleatorio, volumen y barra de tiempo.
-- Selector de dispositivos de salida detectados por Windows.
-- Modo compartido y modo exclusivo segun disponibilidad del dispositivo.
-- Fallback de reproduccion cuando no existen DLL nativas de BASS/MPV.
-- Conversion DSD a PCM en RAM cuando no hay DAC DSD o backend nativo disponible.
-- Extraccion SACD ISO mediante `sacd_extract.exe`.
-- ZenithAI con configuracion de API desde la app.
-- Instalador x64 con Inno Setup.
+- Escaneo rapido de bibliotecas grandes (60 GB+) con tolerancia a subcarpetas protegidas, botones `+ Carpeta` / `Musica Win`, buscador y persistencia de carpetas.
+- Selector rapido de dispositivo de salida y motor en la barra superior con cambio en caliente estilo foobar2000.
+- Motor **Zenith WASAPI** (Compartido y Exclusivo Event/Push con formato `WAVE_FORMAT_EXTENSIBLE` PCM) y motor **ASIO Nativo (DSD64 / DSD128 y PCM)** con selector de driver y acceso directo al panel de control ASIO.
+- Proteccion de Modo Exclusivo (desactivado por defecto; detecta drivers DAC USB dedicados y alerta si la salida no cuenta con controlador DAC para evitar ruido blanco en jacks 3.5 mm).
+- Decodificador DSD/DSF/DFF con filtro FIR de fase lineal Blackman-Harris, ganancia SACD (+0/+3/+6 dB), frecuencias PCM configurables y DoP Exclusivo.
+- Ecualizador biquad real de 3 bandas + preamp con bypass bit-transparente y perfiles AutoEQ.
+- Extraccion SACD ISO mediante `sacd_extract.exe` y soporte de hojas `.cue`.
+- **ZenithAI** integrado directamente con el reproductor, con menu `Chat / Acciones / Config API`, 11 presets de proveedores y extraccion universal de modelos.
+- **Control Remoto Web (Wi-Fi / LAN)** con boton `Remoto` junto a `ZenithAI` e interfaz movil/desktop construida con Tailwind CSS.
+- Instalador completo x64 con Inno Setup (incluye `.NET Desktop Runtime 8` y `Windows App Runtime 1.8`).
 
 ## ZenithAI
 
-ZenithAI es un asistente de audio integrado. Puede responder sobre:
+ZenithAI es un asistente audiófilo integrado directamente con Zenith Audio. Cuenta con un panel flotante movible dividido en 3 vistas (**Chat**, **Acciones** y **Config API**) y un **mini-reproductor sincronizado en vivo**.
 
-- historia musical
-- artistas y albumes
-- diferencias entre DSD, FLAC, WAV, PCM y formatos con perdida
-- configuracion de Windows Audio
-- WASAPI, BASS, MPV y rutas de reproduccion
-- escucha critica
-- recomendaciones de perfil tonal
+### Proveedores y extraccion universal de modelos
 
-ZenithAI usa una API compatible con OpenAI Chat Completions. La configuracion se guarda por usuario en Windows. No se suben claves al repositorio.
+En la vista **Config API** puedes usar cualquier servidor compatible con OpenAI Chat Completions sin importar el proveedor:
 
-Default actual de NVIDIA NIM:
+- **11 presets incluidos:** `NVIDIA NIM`, `OpenAI`, `OpenRouter`, `Groq`, `Google Gemini (OpenAI compat)`, `DeepSeek`, `Mistral AI`, `Together AI`, `Ollama (Local)`, `LM Studio (Local)` y `Personalizado`.
+- **Extraccion automatica de modelos (`Extraer modelos`):** consulta `/v1/models`, `/models` y `/api/tags` (Ollama), muestra una lista filtrable con buscador instantaneo y permite elegir cualquier modelo con un clic o escribirlo manualmente.
+- **Servidores locales sin API key:** `Ollama` y `LM Studio` en `localhost` funcionan sin clave API.
+- **Boton `Probar`:** verifica la conexion y respuesta real del modelo elegido antes de volver al chat.
+- La configuracion y las claves se guardan cifradas por usuario en Windows (`%LOCALAPPDATA%\ZenithAudio\`) y nunca se suben al repositorio.
+
+Default de NVIDIA NIM:
 
 - Endpoint: `https://integrate.api.nvidia.com/v1/chat/completions`
 - Modelo: `nvidia/nemotron-3-super-120b-a12b`
-- Modo de respuesta en la app: JSON completo, sin streaming SSE por ahora
-- Parametros Nemotron: `max_tokens=8192`, `reasoning_budget=4096`, `enable_thinking=true`
+- Parametros Nemotron 3: `max_tokens=8192`, `reasoning_budget=4096`, `enable_thinking=true`
 
-### Comandos locales de tono
+### Integracion directa con el reproductor y comandos locales
 
-Algunos comandos no esperan respuesta de la nube. Zenith Audio los detecta y aplica el perfil directamente sobre el control de tono local:
+ZenithAI puede controlar el reproductor tanto mediante **comandos locales instantaneos** (sin latencia ni consumo de API) como desde **cualquier modelo LLM** mediante acciones estructuradas (`play`, `pause`, `next`, `previous`, `volume`, `seek`, `shuffle`, buscar y reproducir pistas de la biblioteca cargada, cambiar salida de audio, cambiar entre `WASAPI`/`ASIO`/`BASS`/`MPV`, ajustar DSD, aplicar EQ biquad, filtrar biblioteca o lanzar Anti-Fake):
 
-| Comando | Resultado |
+| Comando local | Resultado |
 | --- | --- |
-| `quiero audio mas puro` | Deja DSP en bypass y salida plana |
-| `quiero mas graves` | Sube subgraves con preamp seguro |
-| `quiero menos graves` | Reduce subgraves |
-| `quiero mas agudos` | Sube presencia y aire |
-| `quiero menos agudos` | Reduce brillo y sibilancia |
-| `quiero audio mas calido` | Da mas cuerpo y suaviza aire |
-| `quiero mas detalle` | Realza presencia y aire |
-| `quiero voces al frente` | Enfoca la zona vocal |
+| `pon <cancion o album>` | Busca y reproduce la pista en tu biblioteca cargada |
+| `pausa` / `reanuda` / `detener` / `siguiente` / `anterior` | Control directo del transporte |
+| `volumen 65` | Ajusta el volumen exacto |
+| `cambia a asio` / `cambia a wasapi` | Cambia el motor de reproduccion en caliente |
+| `filtra dsd` / `filtra hires` | Filtra el explorador de biblioteca |
+| `analiza` / `anti-fake` | Ejecuta el analisis espectral Anti-Fake |
+| `quiero audio mas puro` | Deja DSP en bypass bit-transparente y salida plana |
+| `quiero mas graves` / `menos graves` | Ajusta subgraves con preamp anti-clipping |
+| `quiero mas agudos` / `menos agudos` | Ajusta presencia y aire |
+| `quiero audio mas calido` / `mas detalle` / `voces al frente` | Aplica perfiles tonales inmediatos |
 | `ajusta el perfil automatico segun la musica` | Elige perfil segun formato/pista |
 
-Estos ajustes modifican:
+## Control Remoto Web (Wi-Fi / LAN)
 
-- `EQ`
-- `Omitir DSP`
-- `Preamp`
-- `Subgraves`
-- `Presencia`
-- `Aire`
+Zenith Audio incluye un servidor HTTP embebido para controlar el reproductor de forma inalambrica desde tu telefono, tablet u otro navegador en la misma red local Wi-Fi:
 
-Para evitar clipping digital, los perfiles que suben graves o agudos aplican preamp negativo.
+- **Boton `Remoto`** ubicado junto a `ZenithAI` en la barra superior con indicador de estado en vivo.
+- Permite **iniciar y detener el servidor** en un clic sin requerir permisos de administrador en Windows (`TcpListener` en puerto configurable, por defecto `8787`).
+- Detecta automaticamente tu direccion IP local (`http://192.168.x.x:8787`), permite copiar la URL, abrir `localhost`, configurar **PIN opcional** y activar **inicio automatico**.
+- Interfaz web responsiva construida con **Tailwind CSS** (`src/ZenithAudio/Assets/Remote/index.html`) replicando la paleta OLED oscura + cian de Zenith, compatible con *"Anadir a pantalla de inicio"* (PWA):
+  - **Ahora:** carátula en vivo con brillo dinamico, barra VU de 20 segmentos, linea de tiempo deslizable, transporte completo, letra sincronizada y volumen (`Mute`, `-5%`, `+5%`, slider).
+  - **Canciones:** buscador en vivo sobre toda tu biblioteca cargada con filtros `Todas`, `DSD` y `Hi-Res PCM`.
+  - **Audio:** cambio en caliente de dispositivo de salida, motor (`WASAPI`, `ASIO DSD`, `BASS`, `MPV`), driver ASIO, Modo Exclusivo (con proteccion DAC), configuracion DSD y ecualizador biquad + presets.
+
+> **Nota de red:** la primera vez que inicies el servidor remoto, permite el acceso de `ZenithAudio` en el Firewall de Windows para **Redes privadas** si vas a conectarte desde tu telefono.
 
 ## Requisitos para ejecutar
 
@@ -139,8 +153,8 @@ El instalador publicado incluye .NET Desktop Runtime 8 y Windows App Runtime 1.8
 | Ogg / Opus | `.ogg`, `.opus` | Soportado segun Windows Media Foundation o BASS |
 | APE / Monkey's Audio | `.ape` | Soportado con BASS y `bass_ape.dll` |
 | WavPack | `.wv` | Soportado con BASS y `bass_wv.dll` |
-| DSD DSF | `.dsf` | Soportado; fallback a PCM si no hay DAC/backend DSD |
-| DSD DFF | `.dff` | Soportado; fallback PCM para DFF/DSDIFF sin compresion DST |
+| DSD DSF | `.dsf` | Soportado: ASIO DSD64/DSD128 nativo, DoP Exclusivo o decodificacion FIR Blackman-Harris a PCM |
+| DSD DFF | `.dff` | Soportado: ASIO DSD nativo, DoP o FIR PCM para DFF/DSDIFF sin compresion DST |
 | SACD ISO | `.iso` | Soportado mediante extraccion a DSF con `sacd_extract.exe` |
 | Hojas CUE | `.cue` | Soportado como indice virtual de pistas |
 | MQA | `.mqa`, `.flac` con MQA | Reproducible como PCM; decodificacion completa depende del DAC/backend |
@@ -173,16 +187,16 @@ La configuracion local, caches temporales y datos generados por usuario se guard
 ## Requisitos para desarrollo
 
 - .NET 8 SDK.
-- Visual Studio 2022 recomendado para WinUI 3.
+- Visual Studio 2022 o VS Code con Windows App SDK 1.8.
 - Windows 10 build 19041+ o Windows 11.
-- Inno Setup 6 para compilar el instalador.
+- Inno Setup 6 o Inno Setup 7 para compilar el instalador.
 
 ## Compilar
 
 ```powershell
 dotnet restore .\ZenithAudio.sln
 dotnet build .\src\ZenithAudio\ZenithAudio.csproj -c Release -r win-x64
-dotnet run --project .\src\ZenithAudio\ZenithAudio.csproj -c Release
+dotnet run --project .\src\ZenithAudio\ZenithAudio.csproj -c Release -r win-x64
 ```
 
 ## Crear instalador
@@ -190,15 +204,15 @@ dotnet run --project .\src\ZenithAudio\ZenithAudio.csproj -c Release
 El script del instalador esta en `installer/ZenithAudio.iss`.
 
 ```powershell
-.\scripts\Prepare-InstallerRedist.ps1
-dotnet publish .\src\ZenithAudio\ZenithAudio.csproj -c Release -r win-x64 --self-contained false
-& 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' .\installer\ZenithAudio.iss
+powershell -ExecutionPolicy Bypass -File .\scripts\Prepare-InstallerRedist.ps1
+dotnet build .\src\ZenithAudio\ZenithAudio.csproj -c Release -r win-x64
+& 'C:\Program Files\Inno Setup 7\ISCC.exe' .\installer\ZenithAudio.iss
 ```
 
 El instalador generado queda en:
 
 ```text
-artifacts/installer/
+artifacts/installer/ZenithAudio_v1.0.8_Setup_win-x64.exe
 ```
 
 ## Herramientas nativas opcionales

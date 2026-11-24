@@ -209,6 +209,13 @@ public sealed class AudioEngine : IDisposable
 
         public void Play(string filePath)
         {
+            if (_wasapiReady)
+            {
+                BassWasapiNative.BASS_WASAPI_Stop(true);
+                BassWasapiNative.BASS_WASAPI_Free();
+                _wasapiReady = false;
+            }
+
             FreeStream();
 
             _stream = CreateDecodeStream(filePath);
@@ -441,6 +448,15 @@ public sealed class AudioEngine : IDisposable
             }
 
             SetOption("ao", "wasapi");
+            if (!string.IsNullOrWhiteSpace(_options.DeviceId))
+            {
+                var wasapiId = ExtractMmDeviceId(_options.DeviceId);
+                if (!string.IsNullOrWhiteSpace(wasapiId))
+                {
+                    SetOption("audio-device", $"wasapi/{wasapiId}");
+                }
+            }
+
             SetOption("audio-exclusive", _options.UseWasapiExclusive ? "yes" : "no");
             SetOption("audio-buffer", $"{Math.Clamp(_options.BufferMilliseconds, 50, 500) / 1000.0:0.###}");
             SetOption("terminal", "no");
@@ -498,6 +514,18 @@ public sealed class AudioEngine : IDisposable
             {
                 throw new InvalidOperationException($"MPV seek failed: {MpvNative.GetError(result)}");
             }
+        }
+
+        private static string? ExtractMmDeviceId(string rawDeviceId)
+        {
+            var start = rawDeviceId.IndexOf("{0.0.0.", StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+            {
+                return rawDeviceId.StartsWith('{') ? rawDeviceId : null;
+            }
+
+            var end = rawDeviceId.IndexOf('#', start);
+            return end > start ? rawDeviceId[start..end] : rawDeviceId[start..];
         }
 
         private void SetOption(string name, string value)

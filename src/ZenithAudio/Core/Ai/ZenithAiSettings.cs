@@ -28,10 +28,25 @@ public sealed record ZenithAiSettings(
 
     public static ZenithAiSettings Default => new(DefaultProvider, DefaultEndpoint, DefaultModel, string.Empty);
 
+    public bool RequiresApiKey => !IsLocalEndpoint(Endpoint);
+
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(Endpoint) &&
         !string.IsNullOrWhiteSpace(Model) &&
-        !string.IsNullOrWhiteSpace(ApiKey);
+        (!RequiresApiKey || !string.IsNullOrWhiteSpace(ApiKey));
+
+    public static bool IsLocalEndpoint(string? endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint) || !Uri.TryCreate(endpoint.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.IsLoopback ||
+               uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+               uri.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+               uri.Host.Equals("::1", StringComparison.OrdinalIgnoreCase);
+    }
 
     public static ZenithAiSettings Load()
     {

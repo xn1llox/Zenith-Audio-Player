@@ -1,8 +1,10 @@
 #define MyAppName "Zenith Audio"
-#define MyAppVersion "1.0.7"
+#define MyAppVersion "1.0.8"
 #define MyAppPublisher "Felipe Espinoza"
 #define MyAppExeName "ZenithAudio.exe"
-#define SourceDir "..\src\ZenithAudio\bin\Release\net8.0-windows10.0.19041.0\win-x64"
+#ifndef SourceDir
+  #define SourceDir "..\src\ZenithAudio\bin\Release\net8.0-windows10.0.19041.0\win-x64"
+#endif
 #define DotNetDesktopRuntimeInstaller "windowsdesktop-runtime-8.0.25-win-x64.exe"
 #define WindowsAppRuntimeInstaller "WindowsAppRuntimeInstall-1.8.260416003-x64.exe"
 

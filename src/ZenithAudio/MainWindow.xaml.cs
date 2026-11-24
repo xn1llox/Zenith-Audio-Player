@@ -75,12 +75,30 @@ public sealed partial class MainWindow : Window
     };
 
     private readonly AudioEngine _audioEngine = new();
+    private readonly WasapiPlaybackEngine _wasapiEngine = new();
+    private readonly AsioPlaybackEngine _asioEngine = new();
     private readonly AudioLevelAnalyzer _audioLevelAnalyzer = new();
     private readonly ToneControlSettings _toneSettings = new();
+    private readonly List<AsioDriverInfo> _asioDrivers = [];
+    private bool _usingWasapiEngine;
+    private bool _usingAsioEngine;
+    private bool _isLoadingAsioDrivers;
+    private bool _isSyncingOutputSelectors;
+    private bool _isLoadingAudioSettings;
+    private bool _isRevertingExclusiveToggle;
+    private bool _isShowingExclusiveAlert;
+    private bool _showInspectorInNarrow;
+    private int _compactPaneMode; // 0 = Player, 1 = Library, 2 = Inspector
+    private double _lastLayoutWidth;
+    private double _lastLayoutHeight;
+    private string? _activePlaybackFilePath;
+    private SavedAudioSettings? _savedAudioSettings;
     private readonly ZenithAiClient _zenithAiClient = new();
     private readonly List<ZenithAiChatMessage> _zenithAiMessages = [];
+    private readonly List<ZenithAiModelInfo> _zenithAiFetchedModels = [];
     private CancellationTokenSource? _zenithAiRequestCancellation;
     private bool _zenithAiCancelRequestedByUser;
+    private bool _isSyncingZenithAiProviderPreset;
     private bool _isDraggingZenithAiPanel;
     private Windows.Foundation.Point _zenithAiDragStartPoint;
     private double _zenithAiDragStartX;
@@ -91,6 +109,7 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, IsoAudioEntry> _isoEntries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CueAudioEntry> _cueEntries = new(StringComparer.OrdinalIgnoreCase);
     private string _activeLibraryTitle = "Explorador de biblioteca";
+    private bool _isShowingFolderBrowser;
     private readonly List<OutputDeviceOption> _outputDevices = [];
     private List<SyncedLyricLine> _syncedLyrics = [];
     private int _currentLyricIndex = -1;
@@ -144,13 +163,19 @@ public sealed partial class MainWindow : Window
 
         _audioEngine.PlaybackStateChanged += AudioEngine_PlaybackStateChanged;
         _audioEngine.SignalChanged += AudioEngine_SignalChanged;
+        _wasapiEngine.TrackEnded += WasapiEngine_TrackEnded;
+        _wasapiEngine.LevelChanged += WasapiEngine_LevelChanged;
+        _asioEngine.TrackEnded += AsioEngine_TrackEnded;
+        _asioEngine.LevelChanged += AsioEngine_LevelChanged;
         FallbackPlayerElement.SetMediaPlayer(_fallbackMediaPlayer);
         _fallbackMediaPlayer.MediaOpened += FallbackMediaPlayer_MediaOpened;
         _fallbackMediaPlayer.MediaEnded += FallbackMediaPlayer_MediaEnded;
         _fallbackMediaPlayer.AudioCategory = MediaPlayerAudioCategory.Media;
         _fallbackMediaPlayer.Volume = 1.0;
         Closed += MainWindow_Closed;
+        LoadSavedAudioSettings();
         InitializeOutputDeviceList();
+        RefreshAsioDrivers();
         UpdateSacdExtractorStatus();
         UpdateToneControlState(showStatus: false);
         ApplyOutputDeviceSettings();
@@ -159,15 +184,485 @@ public sealed partial class MainWindow : Window
         _vuUsesLiveLevel = false;
         ResetVuMeter();
         UpdateShuffleButtonVisual();
+        ConfigureDarkTitleBar();
+        SetWindowIcon();
+        LoadBrandLogos();
+        SelectRightPanelTab(0);
+        if (ZenithAiProviderPresetComboBox is not null)
+        {
+            ZenithAiProviderPresetComboBox.ItemsSource = ZenithAiClient.ProviderPresets;
+        }
+        InitializeRemoteControl();
         _ = RefreshOutputDevicesAsync();
+        _ = LoadSavedLibraryFoldersAsync();
+    }
+
+    private void ConfigureDarkTitleBar()
+    {
+        try
+        {
+            var titleBar = AppWindow.TitleBar;
+            if (titleBar is null)
+            {
+                return;
+            }
+
+            var bg = Microsoft.UI.ColorHelper.FromArgb(255, 2, 6, 11);
+            var fg = Microsoft.UI.ColorHelper.FromArgb(255, 224, 242, 255);
+            var muted = Microsoft.UI.ColorHelper.FromArgb(255, 130, 168, 196);
+            var hoverBg = Microsoft.UI.ColorHelper.FromArgb(255, 14, 42, 66);
+            var pressedBg = Microsoft.UI.ColorHelper.FromArgb(255, 22, 66, 102);
+
+            titleBar.IconShowOptions = Microsoft.UI.Windowing.IconShowOptions.ShowIconAndSystemMenu;
+            titleBar.BackgroundColor = bg;
+            titleBar.ForegroundColor = fg;
+            titleBar.InactiveBackgroundColor = bg;
+            titleBar.InactiveForegroundColor = muted;
+            titleBar.ButtonBackgroundColor = bg;
+            titleBar.ButtonForegroundColor = fg;
+            titleBar.ButtonHoverBackgroundColor = hoverBg;
+            titleBar.ButtonHoverForegroundColor = Microsoft.UI.Colors.White;
+            titleBar.ButtonPressedBackgroundColor = pressedBg;
+            titleBar.ButtonPressedForegroundColor = Microsoft.UI.Colors.White;
+            titleBar.ButtonInactiveBackgroundColor = bg;
+            titleBar.ButtonInactiveForegroundColor = muted;
+        }
+        catch
+        {
+        }
+    }
+
+    private void RightTabSignalButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectRightPanelTab(0);
+    }
+
+    private void RightTabToneButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectRightPanelTab(1);
+    }
+
+    private void RightTabSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectRightPanelTab(2);
+    }
+
+    private void SelectRightPanelTab(int tabIndex)
+    {
+        if (SystemSettingsBorder is null || ToneControlCardBorder is null || SystemConfigCardBorder is null)
+        {
+            return;
+        }
+
+        SystemSettingsBorder.Visibility = tabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ToneControlCardBorder.Visibility = tabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+        SystemConfigCardBorder.Visibility = tabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+
+        if (CreditsCardBorder is not null)
+        {
+            CreditsCardBorder.Visibility = tabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        UpdateRightTabButtonStyle(RightTabSignalButton, isActive: tabIndex == 0);
+        UpdateRightTabButtonStyle(RightTabToneButton, isActive: tabIndex == 1);
+        UpdateRightTabButtonStyle(RightTabSettingsButton, isActive: tabIndex == 2);
+
+        RightPanelScrollViewer?.ChangeView(null, 0, null, disableAnimation: true);
+    }
+
+    private static void UpdateRightTabButtonStyle(Button? button, bool isActive)
+    {
+        if (button is null)
+        {
+            return;
+        }
+
+        button.Background = new SolidColorBrush(isActive
+            ? Microsoft.UI.ColorHelper.FromArgb(255, 8, 56, 92)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 4, 10, 18));
+        button.BorderBrush = new SolidColorBrush(isActive
+            ? Microsoft.UI.ColorHelper.FromArgb(255, 56, 178, 248)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 18, 46, 70));
+        button.Foreground = new SolidColorBrush(isActive
+            ? Microsoft.UI.ColorHelper.FromArgb(255, 232, 247, 255)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 152, 184, 208));
+    }
+
+    private void RootGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ApplyResponsiveLayout(e.NewSize.Width, e.NewSize.Height);
+    }
+
+    private void ToggleLibraryPaneButton_Click(object sender, RoutedEventArgs e)
+    {
+        _compactPaneMode = _compactPaneMode == 1 ? 0 : 1;
+        ApplyResponsiveLayout(
+            _lastLayoutWidth > 0 ? _lastLayoutWidth : RootGrid.ActualWidth,
+            _lastLayoutHeight > 0 ? _lastLayoutHeight : RootGrid.ActualHeight);
+    }
+
+    private void ToggleInspectorPaneButton_Click(object sender, RoutedEventArgs e)
+    {
+        var width = _lastLayoutWidth > 0 ? _lastLayoutWidth : RootGrid.ActualWidth;
+        if (width < 780)
+        {
+            _compactPaneMode = _compactPaneMode == 2 ? 0 : 2;
+        }
+        else
+        {
+            _showInspectorInNarrow = !_showInspectorInNarrow;
+        }
+
+        ApplyResponsiveLayout(width, _lastLayoutHeight > 0 ? _lastLayoutHeight : RootGrid.ActualHeight);
+    }
+
+    private void ApplyResponsiveLayout(double width, double height)
+    {
+        if (width <= 0 || height <= 0 || TopHeaderGrid is null || WorkspaceGrid is null || PlaybackBarGrid is null)
+        {
+            return;
+        }
+
+        _lastLayoutWidth = width;
+        _lastLayoutHeight = height;
+
+        var isWide = width >= 1120;
+        var isHalfScreen = width >= 780 && width < 1120;
+        var isCompact = width < 780;
+        var isShort = height < 730;
+
+        // 1. Global spacing & padding density
+        if (isCompact || isShort)
+        {
+            RootGrid.Padding = new Thickness(10, 8, 10, 10);
+            RootGrid.RowSpacing = 8;
+            TopHeaderBorder.Padding = new Thickness(12, 8, 12, 8);
+            MainListeningPanelBorder.Padding = new Thickness(14, 12, 14, 12);
+            PlaybackBarBorder.Padding = new Thickness(12, 8, 12, 8);
+        }
+        else if (width < 1340)
+        {
+            RootGrid.Padding = new Thickness(12, 10, 12, 12);
+            RootGrid.RowSpacing = 10;
+            TopHeaderBorder.Padding = new Thickness(14, 9, 14, 9);
+            MainListeningPanelBorder.Padding = new Thickness(16, 14, 16, 14);
+            PlaybackBarBorder.Padding = new Thickness(14, 9, 14, 9);
+        }
+        else
+        {
+            RootGrid.Padding = new Thickness(16, 12, 16, 14);
+            RootGrid.RowSpacing = 12;
+            TopHeaderBorder.Padding = new Thickness(16, 10, 16, 10);
+            MainListeningPanelBorder.Padding = new Thickness(20, 18, 20, 18);
+            PlaybackBarBorder.Padding = new Thickness(16, 10, 16, 10);
+        }
+
+        // 2. Adaptive Top Header (1-row on wide screens, 2-row on split/compact)
+        var twoRowHeader = width < 1240;
+        if (twoRowHeader)
+        {
+            Grid.SetRow(AudioOutputBarBorder, 1);
+            Grid.SetColumn(AudioOutputBarBorder, 0);
+            Grid.SetColumnSpan(AudioOutputBarBorder, 3);
+            AudioOutputBarBorder.HorizontalAlignment = HorizontalAlignment.Stretch;
+            QuickOutputDeviceComboBox.Width = double.NaN;
+            BackendComboBox.Width = width < 640 ? 128 : 158;
+            BrandSubtitleTextBlock.Visibility = Visibility.Collapsed;
+            BrandLogoImage.Width = width < 640 ? 30 : 34;
+            BrandLogoImage.Height = BrandLogoImage.Width;
+            BrandTitleTextBlock.FontSize = width < 640 ? 17 : 19;
+            ExclusiveLabelTextBlock.Visibility = width < 620 ? Visibility.Collapsed : Visibility.Visible;
+            OutputBarDivider.Visibility = width < 620 ? Visibility.Collapsed : Visibility.Visible;
+            OpenFileLabelTextBlock.Visibility = width < 700 ? Visibility.Collapsed : Visibility.Visible;
+            ZenithAiLabelTextBlock.Visibility = width < 700 ? Visibility.Collapsed : Visibility.Visible;
+            if (RemoteLabelTextBlock is not null)
+            {
+                RemoteLabelTextBlock.Visibility = width < 760 ? Visibility.Collapsed : Visibility.Visible;
+            }
+        }
+        else
+        {
+            Grid.SetRow(AudioOutputBarBorder, 0);
+            Grid.SetColumn(AudioOutputBarBorder, 1);
+            Grid.SetColumnSpan(AudioOutputBarBorder, 1);
+            AudioOutputBarBorder.HorizontalAlignment = HorizontalAlignment.Right;
+            QuickOutputDeviceComboBox.Width = width >= 1420 ? 248 : 196;
+            BackendComboBox.Width = width >= 1420 ? 168 : 152;
+            BrandSubtitleTextBlock.Visibility = width >= 1360 ? Visibility.Visible : Visibility.Collapsed;
+            BrandLogoImage.Width = 38;
+            BrandLogoImage.Height = 38;
+            BrandTitleTextBlock.FontSize = 21;
+            ExclusiveLabelTextBlock.Visibility = Visibility.Visible;
+            OutputBarDivider.Visibility = Visibility.Visible;
+            OpenFileLabelTextBlock.Visibility = Visibility.Visible;
+            ZenithAiLabelTextBlock.Visibility = Visibility.Visible;
+            if (RemoteLabelTextBlock is not null)
+            {
+                RemoteLabelTextBlock.Visibility = Visibility.Visible;
+            }
+        }
+
+        // 3. Adaptive Workspace Columns (3-col Desktop | 2-col Split-Screen | 1-col Compact)
+        double estimatedCenterWidth;
+        if (isWide)
+        {
+            var leftWidth = width >= 1360 ? 284.0 : 244.0;
+            var rightWidth = width >= 1360 ? 332.0 : 292.0;
+            LeftSidebarColumn.Width = new GridLength(leftWidth);
+            CenterStageColumn.Width = new GridLength(1, GridUnitType.Star);
+            RightInspectorColumn.Width = new GridLength(rightWidth);
+            WorkspaceGrid.ColumnSpacing = width >= 1360 ? 14 : 10;
+
+            LeftSidebarGrid.Visibility = Visibility.Visible;
+            MainListeningPanelBorder.Visibility = Visibility.Visible;
+            RightInspectorGrid.Visibility = Visibility.Visible;
+
+            ToggleLibraryPaneButton.Visibility = Visibility.Collapsed;
+            ToggleInspectorPaneButton.Visibility = Visibility.Collapsed;
+
+            estimatedCenterWidth = Math.Max(320, width - leftWidth - rightWidth - 60);
+        }
+        else if (isHalfScreen)
+        {
+            ToggleLibraryPaneButton.Visibility = Visibility.Collapsed;
+            ToggleInspectorPaneButton.Visibility = Visibility.Visible;
+            ToggleInspectorPaneLabel.Visibility = Visibility.Visible;
+            UpdateHeaderPaneToggleVisual(ToggleInspectorPaneButton, isActive: _showInspectorInNarrow);
+
+            if (_showInspectorInNarrow)
+            {
+                const double rightWidth = 310.0;
+                LeftSidebarColumn.Width = new GridLength(0);
+                CenterStageColumn.Width = new GridLength(1, GridUnitType.Star);
+                RightInspectorColumn.Width = new GridLength(rightWidth);
+                LeftSidebarGrid.Visibility = Visibility.Collapsed;
+                MainListeningPanelBorder.Visibility = Visibility.Visible;
+                RightInspectorGrid.Visibility = Visibility.Visible;
+                WorkspaceGrid.ColumnSpacing = 10;
+                estimatedCenterWidth = Math.Max(320, width - rightWidth - 40);
+            }
+            else
+            {
+                const double leftWidth = 248.0;
+                LeftSidebarColumn.Width = new GridLength(leftWidth);
+                CenterStageColumn.Width = new GridLength(1, GridUnitType.Star);
+                RightInspectorColumn.Width = new GridLength(0);
+                LeftSidebarGrid.Visibility = Visibility.Visible;
+                MainListeningPanelBorder.Visibility = Visibility.Visible;
+                RightInspectorGrid.Visibility = Visibility.Collapsed;
+                WorkspaceGrid.ColumnSpacing = 10;
+                estimatedCenterWidth = Math.Max(320, width - leftWidth - 40);
+            }
+        }
+        else
+        {
+            ToggleLibraryPaneButton.Visibility = Visibility.Visible;
+            ToggleInspectorPaneButton.Visibility = Visibility.Visible;
+            var showPaneLabels = width >= 560;
+            ToggleLibraryPaneLabel.Visibility = showPaneLabels ? Visibility.Visible : Visibility.Collapsed;
+            ToggleInspectorPaneLabel.Visibility = showPaneLabels ? Visibility.Visible : Visibility.Collapsed;
+            UpdateHeaderPaneToggleVisual(ToggleLibraryPaneButton, isActive: _compactPaneMode == 1);
+            UpdateHeaderPaneToggleVisual(ToggleInspectorPaneButton, isActive: _compactPaneMode == 2);
+
+            WorkspaceGrid.ColumnSpacing = 0;
+            LeftSidebarGrid.Visibility = _compactPaneMode == 1 ? Visibility.Visible : Visibility.Collapsed;
+            MainListeningPanelBorder.Visibility = _compactPaneMode == 0 ? Visibility.Visible : Visibility.Collapsed;
+            RightInspectorGrid.Visibility = _compactPaneMode == 2 ? Visibility.Visible : Visibility.Collapsed;
+
+            LeftSidebarColumn.Width = _compactPaneMode == 1 ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            CenterStageColumn.Width = _compactPaneMode == 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            RightInspectorColumn.Width = _compactPaneMode == 2 ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+
+            estimatedCenterWidth = Math.Max(300, width - 24);
+        }
+
+        // 4. Adaptive Center Listening Stage (Cover Art & VU/Lyrics split)
+        TrackTitleTextBlock.FontSize = isCompact || isShort ? 19 : (width < 1260 ? 22 : 25);
+
+        var showCoverCard = estimatedCenterWidth >= 480 && height >= 560;
+        var coverWidth = estimatedCenterWidth >= 680 && !isShort ? 244.0 : 188.0;
+        if (showCoverCard)
+        {
+            CoverArtColumn.Width = new GridLength(coverWidth);
+            CoverCardBorder.Width = coverWidth;
+            CoverArtImageRow.Height = new GridLength(coverWidth - 24);
+            CoverCardBorder.Visibility = Visibility.Visible;
+            ListeningContentGrid.ColumnSpacing = coverWidth > 200 ? 16 : 12;
+        }
+        else
+        {
+            CoverArtColumn.Width = new GridLength(0);
+            CoverCardBorder.Visibility = Visibility.Collapsed;
+            ListeningContentGrid.ColumnSpacing = 0;
+        }
+
+        var tabContentWidth = estimatedCenterWidth - (showCoverCard ? coverWidth + 16 : 0) - 36;
+        if (tabContentWidth < 430)
+        {
+            LyricsPreviewColumn.Width = new GridLength(0);
+            LyricsPreviewCardBorder.Visibility = Visibility.Collapsed;
+            ListeningTabSplitGrid.ColumnSpacing = 0;
+        }
+        else
+        {
+            VuMeterColumn.Width = new GridLength(1.25, GridUnitType.Star);
+            LyricsPreviewColumn.Width = new GridLength(1, GridUnitType.Star);
+            LyricsPreviewCardBorder.Visibility = Visibility.Visible;
+            ListeningTabSplitGrid.ColumnSpacing = 12;
+        }
+
+        // 5. Adaptive Bottom Playback Transport Bar (1-row Desktop vs 2-row Split/Compact)
+        if (width >= 1040)
+        {
+            Grid.SetRow(TimelineGrid, 0);
+            Grid.SetColumn(TimelineGrid, 1);
+            Grid.SetColumnSpan(TimelineGrid, 1);
+
+            Grid.SetRow(TransportControlsPanel, 0);
+            Grid.SetColumn(TransportControlsPanel, 0);
+            Grid.SetColumnSpan(TransportControlsPanel, 1);
+            TransportControlsPanel.HorizontalAlignment = HorizontalAlignment.Left;
+
+            MiniSpectrumGrid.Visibility = width >= 1240 ? Visibility.Visible : Visibility.Collapsed;
+            Grid.SetRow(MiniSpectrumGrid, 0);
+            Grid.SetColumn(MiniSpectrumGrid, 2);
+
+            VolumeControlPanel.Visibility = Visibility.Visible;
+            Grid.SetRow(VolumeControlPanel, 0);
+            Grid.SetColumn(VolumeControlPanel, 3);
+            VolumeSlider.Width = width >= 1240 ? 106 : 84;
+
+            ActiveRoutePillBorder.Visibility = Visibility.Visible;
+            Grid.SetRow(ActiveRoutePillBorder, 0);
+            Grid.SetColumn(ActiveRoutePillBorder, 4);
+            ActiveRoutePillBorder.MinWidth = width >= 1240 ? 148 : 126;
+        }
+        else
+        {
+            // Row 0: Full-width seek timeline
+            Grid.SetRow(TimelineGrid, 0);
+            Grid.SetColumn(TimelineGrid, 0);
+            Grid.SetColumnSpan(TimelineGrid, 5);
+
+            // Row 1: Transport controls + Volume + optional Route
+            MiniSpectrumGrid.Visibility = Visibility.Collapsed;
+            Grid.SetRow(TransportControlsPanel, 1);
+            Grid.SetColumn(TransportControlsPanel, 0);
+
+            if (width < 600)
+            {
+                Grid.SetColumnSpan(TransportControlsPanel, 5);
+                TransportControlsPanel.HorizontalAlignment = HorizontalAlignment.Center;
+                VolumeControlPanel.Visibility = Visibility.Collapsed;
+                ActiveRoutePillBorder.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                Grid.SetColumnSpan(TransportControlsPanel, 2);
+                TransportControlsPanel.HorizontalAlignment = HorizontalAlignment.Left;
+
+                VolumeControlPanel.Visibility = Visibility.Visible;
+                Grid.SetRow(VolumeControlPanel, 1);
+                Grid.SetColumn(VolumeControlPanel, 3);
+                VolumeSlider.Width = 88;
+
+                ActiveRoutePillBorder.Visibility = width >= 820 ? Visibility.Visible : Visibility.Collapsed;
+                Grid.SetRow(ActiveRoutePillBorder, 1);
+                Grid.SetColumn(ActiveRoutePillBorder, 4);
+                ActiveRoutePillBorder.MinWidth = 128;
+            }
+        }
+
+        // 6. Keep ZenithAI and Remote Floating Panels responsive inside current window bounds
+        if (ZenithAiPanelBorder is not null)
+        {
+            var aiWidth = Math.Clamp(width - 48, 340, 820);
+            var aiHeight = Math.Clamp(height - 48, 380, 680);
+            ZenithAiPanelBorder.MinWidth = Math.Min(340, aiWidth);
+            ZenithAiPanelBorder.MinHeight = Math.Min(380, aiHeight);
+            ZenithAiPanelBorder.Width = aiWidth;
+            ZenithAiPanelBorder.Height = aiHeight;
+            ClampZenithAiPanelPosition();
+        }
+
+        if (RemoteControlPanelBorder is not null)
+        {
+            RemoteControlPanelBorder.Width = Math.Clamp(width - 32, 300, 430);
+            RemoteControlPanelBorder.MaxHeight = Math.Max(320, height - 92);
+        }
+    }
+
+    private static void UpdateHeaderPaneToggleVisual(Button button, bool isActive)
+    {
+        button.Background = new SolidColorBrush(isActive
+            ? Microsoft.UI.ColorHelper.FromArgb(255, 8, 56, 92)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 7, 19, 32));
+        button.BorderBrush = new SolidColorBrush(isActive
+            ? Microsoft.UI.ColorHelper.FromArgb(255, 56, 178, 248)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 23, 61, 91));
+    }
+
+    private static string? ResolveBrandAssetPath(string fileName)
+    {
+        var candidates = new List<string>
+        {
+            Path.Combine(AppContext.BaseDirectory, "Assets", fileName),
+            Path.Combine(AppContext.BaseDirectory, "Imagenes", fileName)
+        };
+
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var i = 0; i < 6 && dir is not null; i++)
+        {
+            candidates.Add(Path.Combine(dir.FullName, "Imagenes", fileName));
+            candidates.Add(Path.Combine(dir.FullName, "Assets", fileName));
+            dir = dir.Parent;
+        }
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     private void SetWindowIcon()
     {
-        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Icono.ico");
-        if (File.Exists(iconPath))
+        try
         {
-            AppWindow.SetIcon(iconPath);
+            var iconPath = ResolveBrandAssetPath("Icono.ico");
+            if (!string.IsNullOrWhiteSpace(iconPath))
+            {
+                AppWindow.SetIcon(iconPath);
+                AppWindow.SetTitleBarIcon(iconPath);
+                AppWindow.SetTaskbarIcon(iconPath);
+            }
+        }
+        catch
+        {
+            // Ignore icon errors on unsupported Windows builds.
+        }
+    }
+
+    private void LoadBrandLogos()
+    {
+        try
+        {
+            var logoPath = ResolveBrandAssetPath("Logo.png") ?? ResolveBrandAssetPath("Icono.ico");
+            if (string.IsNullOrWhiteSpace(logoPath))
+            {
+                return;
+            }
+
+            var uri = new Uri(logoPath);
+            if (BrandLogoImage is not null)
+            {
+                BrandLogoImage.Source = new BitmapImage(uri);
+            }
+
+            if (CoverPlaceholderLogoImage is not null)
+            {
+                CoverPlaceholderLogoImage.Source = new BitmapImage(uri);
+            }
+        }
+        catch
+        {
+            // Keep XAML fallback if image cannot be decoded.
         }
     }
 
@@ -272,7 +767,11 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var requestedFilePath = _currentFilePath;
+        await StartPlaybackInternalAsync(_currentFilePath, resumePosition: null);
+    }
+
+    private async Task StartPlaybackInternalAsync(string requestedFilePath, TimeSpan? resumePosition)
+    {
         var playbackFilePath = await ResolvePlayablePathAsync(requestedFilePath);
         if (playbackFilePath is null)
         {
@@ -280,9 +779,9 @@ public sealed partial class MainWindow : Window
         }
 
         var backend = GetSelectedBackend();
-        BackendTextBlock.Text = backend == AudioBackend.BassWasapi ? "BASS" : "MPV";
+        BackendTextBlock.Text = GetBackendShortLabel(backend);
         ApplyAdaptiveBufferForTrack(playbackFilePath);
-        OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "DAC exclusivo" : "Windows compartido";
+        OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "WASAPI Exclusivo" : "WASAPI Compartido";
         PlayButton.IsEnabled = false;
         PauseButton.IsEnabled = false;
         StopButton.IsEnabled = false;
@@ -291,12 +790,21 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            StopCurrentPlaybackForTrackChange();
+            _activePlaybackFilePath = playbackFilePath;
+
             var extension = Path.GetExtension(playbackFilePath);
             var isDsd = DsdExtensions.Contains(extension);
-            var nativeAvailable = IsNativeBackendAvailable(backend, playbackFilePath);
+            var dsdOptions = GetCurrentDsdPlaybackOptions();
+            var useExternalNative = backend is AudioBackend.BassWasapi or AudioBackend.MpvWasapi && IsNativeBackendAvailable(backend, playbackFilePath);
             var mpvWithoutExclusiveDac = backend == AudioBackend.MpvWasapi && !IsExclusiveDacSelected();
+            var startPosition = resumePosition ?? (_pendingCueEntry is not null && _pendingCueEntry.Start > TimeSpan.Zero ? _pendingCueEntry.Start : null);
 
-            if (nativeAvailable)
+            if (backend == AudioBackend.AsioNative)
+            {
+                PlayWithAsio(playbackFilePath, dsdOptions, startPosition);
+            }
+            else if (useExternalNative)
             {
                 if (mpvWithoutExclusiveDac)
                 {
@@ -318,11 +826,12 @@ public sealed partial class MainWindow : Window
                 });
 
                 await _audioEngine.PlayAsync(playbackFilePath);
-                if (_pendingCueEntry is not null && _pendingCueEntry.Start > TimeSpan.Zero)
+                if (startPosition is { } seekStart && seekStart > TimeSpan.Zero)
                 {
-                    _audioEngine.Seek(_pendingCueEntry.Start);
+                    _audioEngine.Seek(seekStart);
                 }
 
+                _usingWasapiEngine = false;
                 _usingFallbackPlayer = false;
                 _vuUsesLiveLevel = false;
                 PrepareVuAnalyzer(playbackFilePath);
@@ -334,33 +843,44 @@ public sealed partial class MainWindow : Window
                     : ExclusiveModeToggle.IsOn ? "DAC exclusivo" : "Windows compartido";
                 UpdateSignalChain("Decodificación nativa");
                 WritePlaybackAuditLog(playbackFilePath, "Nativo");
+
+                StatusInfoBar.Severity = InfoBarSeverity.Success;
+                StatusInfoBar.Message = ExclusiveModeToggle.IsOn && !mpvWithoutExclusiveDac
+                    ? "Reproduciendo en modo exclusivo"
+                    : "Reproduciendo en modo compartido";
+            }
+            else if (CanUseIntegratedWasapi(playbackFilePath, dsdOptions))
+            {
+                await PlayWithIntegratedWasapiAsync(playbackFilePath, dsdOptions, startPosition);
             }
             else
             {
-                if (isDsd)
+                if (isDsd && dsdOptions.OutputMode == DsdOutputMode.NativeExternalOnly)
                 {
-                    ApplyWindowsMaximumQualityFallback(backend, "DSD nativo no disponible");
-                    await PlayWithWindowsFallbackAsync(playbackFilePath);
+                    throw new InvalidOperationException("Modo 'Solo DSD nativo (BASS / MPV)' activo y faltan las DLL nativas. Cambia el modo DSD a Auto o PCM FIR para reproducir sin DLL externas.");
                 }
-                else
-                {
-                    ApplyWindowsMaximumQualityFallback(backend, "Backend nativo no disponible");
-                    await PlayWithWindowsFallbackAsync(playbackFilePath);
-                }
+
+                ApplyWindowsMaximumQualityFallback(backend, isDsd ? "DSD nativo no disponible" : "Backend nativo no disponible");
+                await PlayWithWindowsFallbackAsync(playbackFilePath);
+                StatusInfoBar.Severity = InfoBarSeverity.Success;
+                StatusInfoBar.Message = "Reproduciendo con Windows fallback a la mayor calidad negociada por el sistema";
             }
 
             PlayButton.IsEnabled = true;
             PauseButton.IsEnabled = true;
             StopButton.IsEnabled = true;
             _isPaused = false;
-            TransportBadgeTextBlock.Text = "REPRODUCIENDO";
-            StatusInfoBar.Severity = InfoBarSeverity.Success;
-            StatusInfoBar.Message = _usingFallbackPlayer
-                ? "Reproduciendo con Windows fallback a la mayor calidad negociada por el sistema"
-                : ExclusiveModeToggle.IsOn && !mpvWithoutExclusiveDac ? "Reproduciendo en modo exclusivo" : "Reproduciendo en modo compartido";
+            if (!_usingWasapiEngine && !_usingAsioEngine)
+            {
+                TransportBadgeTextBlock.Text = "REPRODUCIENDO";
+            }
+            RefreshZenithAiPlayerStrip();
         }
         catch (Exception ex)
         {
+            _usingWasapiEngine = false;
+            _usingAsioEngine = false;
+            _usingFallbackPlayer = false;
             UpdatePlaybackAvailabilityV2();
             PauseButton.IsEnabled = false;
             StopButton.IsEnabled = false;
@@ -370,12 +890,315 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void PlayWithAsio(
+        string playbackFilePath,
+        DsdPlaybackOptions dsdOptions,
+        TimeSpan? startPosition)
+    {
+        var selectedDriver = GetSelectedAsioDriver()
+            ?? throw new InvalidOperationException("No hay un controlador ASIO seleccionado. Instala el driver ASIO de tu DAC (por ejemplo FiiO ASIO Driver) y pulsa Actualizar.");
+
+        _asioEngine.Volume = (float)Math.Clamp(VolumeSlider.Value / 100.0, 0.0, 1.0);
+        var windowHandle = WindowNative.GetWindowHandle(this);
+
+        var report = _asioEngine.Play(
+            playbackFilePath,
+            selectedDriver.Name,
+            windowHandle,
+            _toneSettings,
+            dsdOptions,
+            startPosition);
+
+        _usingAsioEngine = true;
+        _usingWasapiEngine = false;
+        _usingFallbackPlayer = false;
+        _vuUsesLiveLevel = true;
+        _vuUsesAnalyzer = false;
+        CleanupTemporaryFallbackFile();
+
+        var duration = _asioEngine.Duration;
+        var position = _asioEngine.Position;
+        _isUpdatingPlaybackProgress = true;
+        PlaybackProgressSlider.Maximum = Math.Max(duration.TotalSeconds, 1);
+        PlaybackProgressSlider.Value = Math.Clamp(position.TotalSeconds, 0, PlaybackProgressSlider.Maximum);
+        _isUpdatingPlaybackProgress = false;
+        CurrentTimeTextBlock.Text = FormatTime(position);
+        DurationTextBlock.Text = FormatTime(duration);
+        _currentLyricIndex = -1;
+        UpdateSyncedLyrics(position);
+
+        SampleRateTextBlock.Text = report.IsNativeDsd
+            ? $"{report.SampleRate / 1_000_000.0:0.##} MHz"
+            : $"{report.SampleRate / 1000.0:0.#} kHz";
+        BitDepthTextBlock.Text = report.IsNativeDsd ? "1 bit" : $"{report.BitDepth} bit";
+        ChannelsTextBlock.Text = report.Channels.ToString(CultureInfo.InvariantCulture);
+        CodecTextBlock.Text = report.SourceCodec;
+        ModeTextBlock.Text = report.IsNativeDsd
+            ? "ASIO DSD Nativo"
+            : report.IsBitPerfect ? "ASIO Bit-Perfect" : "ASIO PCM";
+        OutputPathTextBlock.Text = report.DriverName;
+        TransportBadgeTextBlock.Text = report.IsNativeDsd ? "DSD NATIVO" : "ASIO PCM";
+        VolumeTextBlock.Text = report.IsNativeDsd
+            ? "Volumen 100% (DSD)"
+            : $"Volumen {(int)VolumeSlider.Value}%";
+
+        _playbackTimer.Start();
+        StartVuMeter();
+        UpdateSignalChain(report.DecodeLabel);
+        WritePlaybackAuditLog(playbackFilePath, report.Summary);
+
+        StatusInfoBar.Severity = InfoBarSeverity.Success;
+        StatusInfoBar.Message = report.Summary;
+    }
+
+    private void AsioEngine_LevelChanged(object? sender, double level)
+    {
+        _vuTargetLevel = MapLiveVuLevel(level);
+    }
+
+    private void AsioEngine_TrackEnded(object? sender, EventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_usingAsioEngine)
+            {
+                return;
+            }
+
+            _playbackTimer.Stop();
+            _vuTimer.Stop();
+            _asioEngine.Stop();
+            _usingAsioEngine = false;
+            _vuUsesLiveLevel = false;
+            ResetVuMeter();
+            TransportBadgeTextBlock.Text = "FINALIZADO";
+            PauseButton.IsEnabled = false;
+            StopButton.IsEnabled = false;
+            PlaybackProgressSlider.Value = 0;
+            CurrentTimeTextBlock.Text = "0:00";
+            _ = PlayNextTrackAsync(manual: false);
+        });
+    }
+
+    private async Task PlayWithIntegratedWasapiAsync(
+        string playbackFilePath,
+        DsdPlaybackOptions dsdOptions,
+        TimeSpan? startPosition)
+    {
+        var selectedOutputDevice = GetSelectedOutputDevice();
+        var hasSpecificDevice = selectedOutputDevice is not null && !selectedOutputDevice.IsSystemDefault;
+        var deviceId = hasSpecificDevice ? selectedOutputDevice!.Id : null;
+        var deviceName = hasSpecificDevice ? selectedOutputDevice!.Name : null;
+        var requestExclusive = ExclusiveModeToggle.IsOn;
+        var bufferMs = (int)BufferSlider.Value;
+
+        _wasapiEngine.Volume = (float)Math.Clamp(VolumeSlider.Value / 100.0, 0.0, 1.0);
+
+        WasapiPlaybackReport report;
+        try
+        {
+            report = await Task.Run(() => _wasapiEngine.Play(
+                playbackFilePath,
+                deviceId,
+                deviceName,
+                requestExclusive,
+                bufferMs,
+                _toneSettings,
+                dsdOptions,
+                startPosition));
+        }
+        catch when (!DsdExtensions.Contains(Path.GetExtension(playbackFilePath)) &&
+                    WindowsFallbackExtensions.Contains(Path.GetExtension(playbackFilePath)))
+        {
+            await PlayWithWindowsFallbackAsync(playbackFilePath);
+            StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            StatusInfoBar.Message = "WASAPI integrado no pudo abrir este códec; reproduciendo con Windows Media Foundation.";
+            return;
+        }
+
+        _usingWasapiEngine = true;
+        _usingFallbackPlayer = false;
+        _vuUsesLiveLevel = true;
+        _vuUsesAnalyzer = false;
+        CleanupTemporaryFallbackFile();
+
+        var duration = _wasapiEngine.Duration;
+        var position = _wasapiEngine.Position;
+        _isUpdatingPlaybackProgress = true;
+        PlaybackProgressSlider.Maximum = Math.Max(duration.TotalSeconds, 1);
+        PlaybackProgressSlider.Value = Math.Clamp(position.TotalSeconds, 0, PlaybackProgressSlider.Maximum);
+        _isUpdatingPlaybackProgress = false;
+        CurrentTimeTextBlock.Text = FormatTime(position);
+        DurationTextBlock.Text = FormatTime(duration);
+        _currentLyricIndex = -1;
+        UpdateSyncedLyrics(position);
+
+        SampleRateTextBlock.Text = $"{report.OutputSampleRate / 1000.0:0.#} kHz";
+        BitDepthTextBlock.Text = report.IsDoP ? "1 bit (DoP 24)" : $"{report.OutputBitDepth} bit";
+        ChannelsTextBlock.Text = report.OutputChannels.ToString(CultureInfo.InvariantCulture);
+        CodecTextBlock.Text = report.SourceCodec;
+        ModeTextBlock.Text = report.IsDoP
+            ? "DoP Bit-Perfect"
+            : report.IsBitPerfect
+                ? "Bit-Perfect"
+                : report.IsExclusive
+                    ? (report.IsDsdSource ? "DSD->PCM Excl." : "WASAPI Excl.")
+                    : (report.IsDsdSource ? "DSD->PCM Comp." : "WASAPI Comp.");
+        OutputPathTextBlock.Text = report.IsExclusive
+            ? (report.IsEventDriven ? "WASAPI Excl. (Event)" : "WASAPI Excl. (Push)")
+            : "WASAPI Compartido";
+        TransportBadgeTextBlock.Text = report.IsDoP
+            ? "DoP DSD"
+            : report.IsDsdSource
+                ? "DSD FIR"
+                : "REPRODUCIENDO";
+
+        _playbackTimer.Start();
+        StartVuMeter();
+        UpdateSignalChain(report.DecodeLabel);
+        WritePlaybackAuditLog(playbackFilePath, report.Summary);
+
+        StatusInfoBar.Severity = report.IsExclusive || !requestExclusive
+            ? InfoBarSeverity.Success
+            : InfoBarSeverity.Warning;
+        StatusInfoBar.Message = report.Summary;
+    }
+
+    private void WasapiEngine_LevelChanged(object? sender, double level)
+    {
+        _vuTargetLevel = MapLiveVuLevel(level);
+    }
+
+    private void WasapiEngine_TrackEnded(object? sender, EventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_usingWasapiEngine)
+            {
+                return;
+            }
+
+            _playbackTimer.Stop();
+            _vuTimer.Stop();
+            _usingWasapiEngine = false;
+            _vuUsesLiveLevel = false;
+            ResetVuMeter();
+            TransportBadgeTextBlock.Text = "FINALIZADO";
+            PauseButton.IsEnabled = false;
+            StopButton.IsEnabled = false;
+            PlaybackProgressSlider.Value = 0;
+            CurrentTimeTextBlock.Text = "0:00";
+            _ = PlayNextTrackAsync(manual: false);
+        });
+    }
+
+    private async Task HotSwitchActivePlaybackAsync()
+    {
+        if (_isLoadingAudioSettings || string.IsNullOrWhiteSpace(_currentFilePath))
+        {
+            return;
+        }
+
+        var isActivelyPlaying = _usingAsioEngine
+            ? _asioEngine.IsPlaying
+            : _usingWasapiEngine
+                ? _wasapiEngine.IsPlaying
+                : _usingFallbackPlayer
+                    ? _fallbackMediaPlayer.PlaybackSession.PlaybackState == MediaPlaybackState.Playing
+                    : StopButton.IsEnabled && !_isPaused;
+
+        if (!isActivelyPlaying)
+        {
+            return;
+        }
+
+        var currentPos = _usingAsioEngine
+            ? _asioEngine.Position
+            : _usingWasapiEngine
+                ? _wasapiEngine.Position
+                : _usingFallbackPlayer
+                    ? _fallbackMediaPlayer.PlaybackSession.Position
+                    : TimeSpan.Zero;
+
+        await StartPlaybackInternalAsync(_currentFilePath, currentPos > TimeSpan.Zero ? currentPos : null);
+    }
+
+    private static bool CanUseIntegratedWasapi(string filePath, DsdPlaybackOptions dsdOptions)
+    {
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
+        if (ext is ".dsf" or ".dff")
+        {
+            return dsdOptions.OutputMode != DsdOutputMode.NativeExternalOnly;
+        }
+
+        return WindowsFallbackExtensions.Contains(ext) || ext is ".alac";
+    }
+
+    private DsdPlaybackOptions GetCurrentDsdPlaybackOptions()
+    {
+        var mode = (DsdModeComboBox?.SelectedIndex ?? 0) switch
+        {
+            0 => DsdOutputMode.PcmFir,
+            1 => DsdOutputMode.DoPExclusive,
+            2 => DsdOutputMode.NativeExternalOnly,
+            _ => DsdOutputMode.PcmFir
+        };
+
+        var targetRate = 0;
+        if (DsdPcmRateComboBox?.SelectedItem is ComboBoxItem { Tag: string rateTag } &&
+            int.TryParse(rateTag, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedRate))
+        {
+            targetRate = parsedRate;
+        }
+
+        var gainDb = 6.0;
+        if (DsdGainComboBox?.SelectedItem is ComboBoxItem { Tag: string gainTag } &&
+            double.TryParse(gainTag, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedGain))
+        {
+            gainDb = parsedGain;
+        }
+
+        return new DsdPlaybackOptions(mode, targetRate, gainDb);
+    }
+
+    private static string GetBackendShortLabel(AudioBackend backend)
+    {
+        return backend switch
+        {
+            AudioBackend.ZenithWasapi => "WASAPI",
+            AudioBackend.AsioNative => "ASIO",
+            AudioBackend.MpvWasapi => "MPV",
+            _ => "BASS"
+        };
+    }
+
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_usingFallbackPlayer)
+        if (_usingAsioEngine)
+        {
+            _asioEngine.Stop();
+            _usingAsioEngine = false;
+            _playbackTimer.Stop();
+            _vuTimer.Stop();
+            PlaybackProgressSlider.Value = 0;
+            CurrentTimeTextBlock.Text = "0:00";
+            DurationTextBlock.Text = "0:00";
+        }
+        else if (_usingWasapiEngine)
+        {
+            _wasapiEngine.Stop();
+            _usingWasapiEngine = false;
+            _playbackTimer.Stop();
+            _vuTimer.Stop();
+            PlaybackProgressSlider.Value = 0;
+            CurrentTimeTextBlock.Text = "0:00";
+            DurationTextBlock.Text = "0:00";
+        }
+        else if (_usingFallbackPlayer)
         {
             _fallbackMediaPlayer.Pause();
             _fallbackMediaPlayer.Source = null;
+            _usingFallbackPlayer = false;
             CleanupTemporaryFallbackFile();
             _playbackTimer.Stop();
             _vuTimer.Stop();
@@ -406,7 +1229,15 @@ public sealed partial class MainWindow : Window
     {
         if (!_isPaused)
         {
-            if (_usingFallbackPlayer)
+            if (_usingAsioEngine)
+            {
+                _asioEngine.Pause();
+            }
+            else if (_usingWasapiEngine)
+            {
+                _wasapiEngine.Pause();
+            }
+            else if (_usingFallbackPlayer)
             {
                 _fallbackMediaPlayer.Pause();
             }
@@ -421,10 +1252,19 @@ public sealed partial class MainWindow : Window
             StatusInfoBar.Message = "Pausado";
             _vuTimer.Stop();
             ResetVuMeter();
+            RefreshZenithAiPlayerStrip();
             return;
         }
 
-        if (_usingFallbackPlayer)
+        if (_usingAsioEngine)
+        {
+            _asioEngine.Resume();
+        }
+        else if (_usingWasapiEngine)
+        {
+            _wasapiEngine.Resume();
+        }
+        else if (_usingFallbackPlayer)
         {
             _fallbackMediaPlayer.Play();
         }
@@ -434,11 +1274,14 @@ public sealed partial class MainWindow : Window
         }
 
         _isPaused = false;
-        TransportBadgeTextBlock.Text = "REPRODUCIENDO";
+        TransportBadgeTextBlock.Text = _asioEngine.IsNativeDsdActive
+            ? "DSD NATIVO"
+            : _wasapiEngine.IsDoPActive ? "DoP DSD" : "REPRODUCIENDO";
         StatusInfoBar.Severity = InfoBarSeverity.Success;
         StatusInfoBar.Message = "Reproduciendo";
         _playbackTimer.Start();
         StartVuMeter();
+        RefreshZenithAiPlayerStrip();
     }
 
     private void ShuffleButton_Click(object sender, RoutedEventArgs e)
@@ -485,10 +1328,16 @@ public sealed partial class MainWindow : Window
 
         var volume = Math.Clamp(e.NewValue / 100.0, 0.0, 1.0);
         _fallbackMediaPlayer.Volume = volume;
-        VolumeTextBlock.Text = $"Volumen {(int)e.NewValue}%";
+        _wasapiEngine.Volume = (float)volume;
+        _asioEngine.Volume = (float)volume;
+        VolumeTextBlock.Text = _asioEngine.IsNativeDsdActive
+            ? "Volumen 100% (DSD)"
+            : _wasapiEngine.IsDoPActive
+                ? "Volumen 100% (DoP)"
+                : $"Volumen {(int)e.NewValue}%";
     }
 
-    private void BackendComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void BackendComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (BackendTextBlock is null)
         {
@@ -496,31 +1345,92 @@ public sealed partial class MainWindow : Window
         }
 
         var backend = GetSelectedBackend();
-        BackendTextBlock.Text = backend == AudioBackend.BassWasapi ? "BASS" : "MPV";
-
+        BackendTextBlock.Text = GetBackendShortLabel(backend);
+        SaveAudioSettings();
         UpdatePlaybackAvailabilityV2();
         UpdateSignalChain();
+        await HotSwitchActivePlaybackAsync();
     }
 
-    private void OutputDeviceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void OutputDeviceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (StatusInfoBar is null || OutputPathTextBlock is null)
+        if (_isSyncingOutputSelectors || StatusInfoBar is null || OutputPathTextBlock is null)
         {
             return;
         }
 
+        SyncOutputSelectors(fromQuickSelector: false);
+        EnforceExclusiveDriverGuard(showAlert: false);
+        SaveAudioSettings();
         ApplyOutputDeviceSettings();
         UpdatePlaybackAvailabilityV2();
         UpdateSignalChain();
+        await HotSwitchActivePlaybackAsync();
+    }
+
+    private async void QuickOutputDeviceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isSyncingOutputSelectors || StatusInfoBar is null || OutputPathTextBlock is null)
+        {
+            return;
+        }
+
+        SyncOutputSelectors(fromQuickSelector: true);
+        EnforceExclusiveDriverGuard(showAlert: false);
+        SaveAudioSettings();
+        ApplyOutputDeviceSettings();
+        UpdatePlaybackAvailabilityV2();
+        UpdateSignalChain();
+        await HotSwitchActivePlaybackAsync();
+    }
+
+    private void SyncOutputSelectors(bool fromQuickSelector)
+    {
+        if (OutputDeviceComboBox is null || QuickOutputDeviceComboBox is null)
+        {
+            return;
+        }
+
+        _isSyncingOutputSelectors = true;
+        try
+        {
+            if (fromQuickSelector)
+            {
+                OutputDeviceComboBox.SelectedIndex = QuickOutputDeviceComboBox.SelectedIndex;
+            }
+            else
+            {
+                QuickOutputDeviceComboBox.SelectedIndex = OutputDeviceComboBox.SelectedIndex;
+            }
+        }
+        finally
+        {
+            _isSyncingOutputSelectors = false;
+        }
     }
 
     private void InitializeOutputDeviceList()
     {
-        _outputDevices.Clear();
-        _outputDevices.Add(OutputDeviceOption.SystemDefault);
-        OutputDeviceComboBox.ItemsSource = null;
-        OutputDeviceComboBox.ItemsSource = _outputDevices;
-        OutputDeviceComboBox.SelectedIndex = 0;
+        _isSyncingOutputSelectors = true;
+        try
+        {
+            _outputDevices.Clear();
+            _outputDevices.Add(OutputDeviceOption.SystemDefault);
+            OutputDeviceComboBox.ItemsSource = null;
+            OutputDeviceComboBox.ItemsSource = _outputDevices;
+            OutputDeviceComboBox.SelectedIndex = 0;
+
+            if (QuickOutputDeviceComboBox is not null)
+            {
+                QuickOutputDeviceComboBox.ItemsSource = null;
+                QuickOutputDeviceComboBox.ItemsSource = _outputDevices;
+                QuickOutputDeviceComboBox.SelectedIndex = 0;
+            }
+        }
+        finally
+        {
+            _isSyncingOutputSelectors = false;
+        }
     }
 
     private async Task RefreshOutputDevicesAsync()
@@ -531,31 +1441,51 @@ public sealed partial class MainWindow : Window
 
             DispatcherQueue.TryEnqueue(() =>
             {
-                var selectedId = GetSelectedOutputDevice()?.Id;
-                _outputDevices.Clear();
-                _outputDevices.Add(OutputDeviceOption.SystemDefault);
-
-                foreach (var device in devices.OrderBy(device => device.Name, StringComparer.CurrentCultureIgnoreCase))
+                var selectedId = GetSelectedOutputDevice()?.Id ?? _savedAudioSettings?.DeviceId;
+                _isSyncingOutputSelectors = true;
+                try
                 {
-                    _outputDevices.Add(OutputDeviceOption.FromDevice(device));
+                    _outputDevices.Clear();
+                    _outputDevices.Add(OutputDeviceOption.SystemDefault);
+
+                    foreach (var device in devices.OrderBy(device => device.Name, StringComparer.CurrentCultureIgnoreCase))
+                    {
+                        _outputDevices.Add(OutputDeviceOption.FromDevice(device));
+                    }
+
+                    OutputDeviceComboBox.ItemsSource = null;
+                    OutputDeviceComboBox.ItemsSource = _outputDevices;
+
+                    if (QuickOutputDeviceComboBox is not null)
+                    {
+                        QuickOutputDeviceComboBox.ItemsSource = null;
+                        QuickOutputDeviceComboBox.ItemsSource = _outputDevices;
+                    }
+
+                    var selectedIndex = _outputDevices.FindIndex(device => !string.IsNullOrWhiteSpace(selectedId) && device.Id == selectedId);
+                    if (selectedIndex < 0)
+                    {
+                        selectedIndex = _outputDevices.FindIndex(device => device.IsKnownZishanZ2);
+                    }
+
+                    var resolvedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+                    OutputDeviceComboBox.SelectedIndex = resolvedIndex;
+                    if (QuickOutputDeviceComboBox is not null)
+                    {
+                        QuickOutputDeviceComboBox.SelectedIndex = resolvedIndex;
+                    }
                 }
-
-                OutputDeviceComboBox.ItemsSource = null;
-                OutputDeviceComboBox.ItemsSource = _outputDevices;
-
-                var selectedIndex = _outputDevices.FindIndex(device => !string.IsNullOrWhiteSpace(selectedId) && device.Id == selectedId);
-                if (selectedIndex < 0)
+                finally
                 {
-                    selectedIndex = _outputDevices.FindIndex(device => device.IsKnownZishanZ2);
+                    _isSyncingOutputSelectors = false;
                 }
-
-                OutputDeviceComboBox.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
 
                 StatusInfoBar.Severity = InfoBarSeverity.Informational;
                 StatusInfoBar.Message = devices.Count > 0
-                    ? $"Dispositivos de salida detectados: {devices.Count}. Elige Realtek, USB o DAC desde System Settings."
-                    : "Windows no reporto dispositivos de salida. Se usara el dispositivo predeterminado del sistema.";
+                    ? $"Dispositivos de salida detectados: {devices.Count}. Puedes cambiar la salida arriba o en Ajustes del sistema."
+                    : "Windows no reportó dispositivos de salida. Se usará el dispositivo predeterminado del sistema.";
 
+                EnforceExclusiveDriverGuard(showAlert: false);
                 ApplyOutputDeviceSettings();
                 UpdatePlaybackAvailabilityV2();
                 UpdateSignalChain();
@@ -574,26 +1504,148 @@ public sealed partial class MainWindow : Window
     private async void RefreshOutputDevicesButton_Click(object sender, RoutedEventArgs e)
     {
         StatusInfoBar.Severity = InfoBarSeverity.Informational;
-        StatusInfoBar.Message = "Buscando dispositivos de salida instalados en Windows...";
+        StatusInfoBar.Message = "Buscando dispositivos de salida y controladores ASIO en Windows...";
+        RefreshAsioDrivers();
         await RefreshOutputDevicesAsync();
+    }
+
+    private void RefreshAsioDrivers()
+    {
+        if (AsioDriverComboBox is null)
+        {
+            return;
+        }
+
+        _isLoadingAsioDrivers = true;
+        try
+        {
+            var previousName = GetSelectedAsioDriver()?.Name ?? _savedAudioSettings?.AsioDriverName;
+            _asioDrivers.Clear();
+            _asioDrivers.AddRange(AsioPlaybackEngine.GetAvailableDrivers());
+
+            AsioDriverComboBox.ItemsSource = null;
+            AsioDriverComboBox.ItemsSource = _asioDrivers;
+
+            if (_asioDrivers.Count > 0)
+            {
+                var idx = !string.IsNullOrWhiteSpace(previousName)
+                    ? _asioDrivers.FindIndex(d => d.Name.Equals(previousName, StringComparison.OrdinalIgnoreCase))
+                    : -1;
+                AsioDriverComboBox.SelectedIndex = idx >= 0 ? idx : 0;
+            }
+
+            if (OpenAsioPanelButton is not null)
+            {
+                OpenAsioPanelButton.IsEnabled = _asioDrivers.Count > 0;
+            }
+        }
+        finally
+        {
+            _isLoadingAsioDrivers = false;
+        }
+
+        RefreshBackendLabels();
+    }
+
+    private AsioDriverInfo? GetSelectedAsioDriver()
+    {
+        return AsioDriverComboBox?.SelectedItem as AsioDriverInfo ?? _asioDrivers.FirstOrDefault();
+    }
+
+    private async void AsioDriverComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isLoadingAsioDrivers || StatusInfoBar is null)
+        {
+            return;
+        }
+
+        SaveAudioSettings();
+        UpdatePlaybackAvailabilityV2();
+        UpdateSignalChain();
+        if (GetSelectedBackend() == AudioBackend.AsioNative)
+        {
+            await HotSwitchActivePlaybackAsync();
+        }
+    }
+
+    private void OpenAsioControlPanelButton_Click(object sender, RoutedEventArgs e)
+    {
+        var driver = GetSelectedAsioDriver();
+        if (driver is null)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            StatusInfoBar.Message = "No se detectó ningún controlador ASIO instalado en Windows.";
+            return;
+        }
+
+        try
+        {
+            AsioPlaybackEngine.OpenControlPanel(driver.Name, WindowNative.GetWindowHandle(this));
+            StatusInfoBar.Severity = InfoBarSeverity.Informational;
+            StatusInfoBar.Message = $"Panel de control ASIO abierto: {driver.Name}";
+        }
+        catch (Exception ex)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Error;
+            StatusInfoBar.Message = $"No se pudo abrir el panel ASIO: {ex.Message}";
+        }
     }
 
     private void ZenithAiButton_Click(object sender, RoutedEventArgs e)
     {
+        if (RemoteControlOverlayGrid is not null)
+        {
+            RemoteControlOverlayGrid.Visibility = Visibility.Collapsed;
+        }
+
         ConfigureZenithAiPanelLayout();
         RefreshZenithAiSettingsUi();
+        RefreshZenithAiPlayerStrip();
+        SelectZenithAiTab(_zenithAiClient.IsConfigured ? 0 : 2);
         RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
         ZenithAiOverlayGrid.Visibility = Visibility.Visible;
-        ZenithAiQuestionTextBox.Focus(FocusState.Programmatic);
+        if (_zenithAiClient.IsConfigured)
+        {
+            ZenithAiQuestionTextBox.Focus(FocusState.Programmatic);
+        }
     }
 
     private void ConfigureZenithAiPanelLayout()
     {
-        var windowWidth = Math.Max(900, AppWindow.Size.Width);
-        var windowHeight = Math.Max(700, AppWindow.Size.Height);
-        ZenithAiPanelBorder.Width = Math.Clamp(windowWidth - 420, 680, 940);
-        ZenithAiPanelBorder.Height = Math.Clamp(windowHeight - 220, 560, 760);
+        var windowWidth = _lastLayoutWidth > 0 ? _lastLayoutWidth : Math.Max(900, AppWindow.Size.Width);
+        var windowHeight = _lastLayoutHeight > 0 ? _lastLayoutHeight : Math.Max(700, AppWindow.Size.Height);
+        var aiWidth = Math.Clamp(windowWidth - 48, 340, 820);
+        var aiHeight = Math.Clamp(windowHeight - 48, 360, 680);
+        ZenithAiPanelBorder.MinWidth = Math.Min(340, aiWidth);
+        ZenithAiPanelBorder.MinHeight = Math.Min(360, aiHeight);
+        ZenithAiPanelBorder.Width = aiWidth;
+        ZenithAiPanelBorder.Height = aiHeight;
         ClampZenithAiPanelPosition();
+    }
+
+    private void SelectZenithAiTab(int tabIndex)
+    {
+        if (ZenithAiChatViewGrid is null || ZenithAiCommandsPanel is null || ZenithAiApiSettingsPanel is null)
+        {
+            return;
+        }
+
+        ZenithAiChatViewGrid.Visibility = tabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ZenithAiCommandsPanel.Visibility = tabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+        ZenithAiApiSettingsPanel.Visibility = tabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+
+        UpdateRightTabButtonStyle(ZenithAiTabChatButton, isActive: tabIndex == 0);
+        UpdateRightTabButtonStyle(ZenithAiCommandsButton, isActive: tabIndex == 1);
+        UpdateRightTabButtonStyle(ZenithAiConfigButton, isActive: tabIndex == 2);
+
+        if (tabIndex == 0)
+        {
+            ScrollZenithAiTranscriptToEnd(ZenithAiTranscriptScrollViewer);
+        }
+        else if (tabIndex == 2)
+        {
+            ZenithAiStatusTextBlock.Text = "Elige cualquier proveedor OpenAI-compatible, extrae sus modelos disponibles y guarda.";
+        }
     }
 
     private void RefreshZenithAiSettingsUi()
@@ -603,14 +1655,110 @@ public sealed partial class MainWindow : Window
         ZenithAiEndpointTextBox.Text = _zenithAiClient.Settings.Endpoint;
         ZenithAiModelTextBox.Text = _zenithAiClient.Settings.Model;
         ZenithAiApiKeyBox.Password = _zenithAiClient.Settings.ApiKey;
+
+        SyncZenithAiProviderPresetSelection(_zenithAiClient.Settings.Provider, _zenithAiClient.Settings.Endpoint);
+        UpdateZenithAiModelBadge();
+
         ZenithAiStatusTextBlock.Text = _zenithAiClient.IsConfigured
-            ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
-            : "Falta API key. Abre Config para guardar NVIDIA NIM u otra API compatible.";
+            ? $"Conectado a {_zenithAiClient.Settings.Provider} ({_zenithAiClient.Settings.Model}) · Integración directa con el reproductor activa."
+            : "Configura un proveedor en 'Config API' (NVIDIA NIM, OpenAI, OpenRouter, Groq, Ollama local, etc.).";
+    }
+
+    private void UpdateZenithAiModelBadge()
+    {
+        if (ZenithAiActiveModelBadgeTextBlock is null)
+        {
+            return;
+        }
+
+        var provider = string.IsNullOrWhiteSpace(_zenithAiClient.Settings.Provider) ? "API" : _zenithAiClient.Settings.Provider;
+        var model = string.IsNullOrWhiteSpace(_zenithAiClient.Settings.Model) ? "sin modelo" : _zenithAiClient.Settings.Model;
+        var slash = model.LastIndexOf('/');
+        var shortModel = slash >= 0 && slash < model.Length - 1 ? model[(slash + 1)..] : model;
+        ZenithAiActiveModelBadgeTextBlock.Text = $"{provider} · {shortModel}";
+    }
+
+    private void SyncZenithAiProviderPresetSelection(string provider, string endpoint)
+    {
+        if (ZenithAiProviderPresetComboBox is null)
+        {
+            return;
+        }
+
+        _isSyncingZenithAiProviderPreset = true;
+        try
+        {
+            var presets = ZenithAiClient.ProviderPresets;
+            var matchIndex = -1;
+            for (var i = 0; i < presets.Count; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(presets[i].Endpoint) &&
+                    (presets[i].Endpoint.Equals(endpoint, StringComparison.OrdinalIgnoreCase) ||
+                     presets[i].Name.Equals(provider, StringComparison.OrdinalIgnoreCase)))
+                {
+                    matchIndex = i;
+                    break;
+                }
+            }
+
+            ZenithAiProviderPresetComboBox.SelectedIndex = matchIndex >= 0 ? matchIndex : presets.Count - 1;
+        }
+        finally
+        {
+            _isSyncingZenithAiProviderPreset = false;
+        }
+    }
+
+    private void RefreshZenithAiPlayerStrip()
+    {
+        if (ZenithAiNowPlayingTitleTextBlock is null || ZenithAiNowPlayingMetaTextBlock is null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_currentFilePath))
+        {
+            ZenithAiNowPlayingTitleTextBlock.Text = "Sin pista cargada";
+            ZenithAiNowPlayingMetaTextBlock.Text = $"{_libraryTracks.Count} pistas en biblioteca · Pide a ZenithAI reproducir, cambiar a ASIO o ajustar el EQ";
+        }
+        else
+        {
+            ZenithAiNowPlayingTitleTextBlock.Text = TrackTitleTextBlock?.Text ?? Path.GetFileName(_currentFilePath);
+            ZenithAiNowPlayingMetaTextBlock.Text = $"{CodecTextBlock?.Text} · {SampleRateTextBlock?.Text} · {BackendTextBlock?.Text} · {OutputPathTextBlock?.Text}";
+        }
+
+        if (ZenithAiPlayPauseIcon is not null)
+        {
+            var isActivelyPlaying = _usingAsioEngine
+                ? _asioEngine.IsPlaying
+                : _usingWasapiEngine
+                    ? _wasapiEngine.IsPlaying
+                    : StopButton?.IsEnabled == true && !_isPaused;
+            ZenithAiPlayPauseIcon.Glyph = isActivelyPlaying ? "\uE769" : "\uE768";
+        }
+    }
+
+    private void ZenithAiPlayPauseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (StopButton.IsEnabled)
+        {
+            PauseButton_Click(this, e);
+        }
+        else if (!string.IsNullOrWhiteSpace(_currentFilePath))
+        {
+            PlayButton_Click(this, e);
+        }
+        else if (_libraryTracks.Count > 0)
+        {
+            _ = LoadLibraryTrackAsync(_libraryTracks[0], play: true);
+        }
+
+        RefreshZenithAiPlayerStrip();
     }
 
     private double GetZenithAiTranscriptWidth()
     {
-        return Math.Max(320, ZenithAiPanelBorder.Width - 72);
+        return Math.Max(300, ZenithAiPanelBorder.Width - 72);
     }
 
     private void ZenithAiCloseButton_Click(object sender, RoutedEventArgs e)
@@ -625,68 +1773,188 @@ public sealed partial class MainWindow : Window
     {
         _zenithAiMessages.Clear();
         RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
-        ZenithAiStatusTextBlock.Text = "Historial limpio. Pregunta algo de audio.";
+        ZenithAiStatusTextBlock.Text = "Historial limpio. Puedes chatear o controlar Zenith Audio desde aquí.";
+    }
+
+    private void ZenithAiTabChatButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectZenithAiTab(0);
     }
 
     private void ZenithAiConfigButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ZenithAiCommandsPanel.Visibility == Visibility.Visible)
-        {
-            ZenithAiCommandsPanel.Visibility = Visibility.Collapsed;
-            ZenithAiCommandsButton.Content = "Comandos";
-        }
-
-        ZenithAiApiSettingsPanel.Visibility = ZenithAiApiSettingsPanel.Visibility == Visibility.Visible
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-        ZenithAiConfigButton.Content = ZenithAiApiSettingsPanel.Visibility == Visibility.Visible ? "Ocultar config" : "Config";
-        ZenithAiStatusTextBlock.Text = _zenithAiClient.IsConfigured
-            ? $"Conectado a {_zenithAiClient.Settings.Provider}. ZenithAI (BETA) solo responde temas de audio."
-            : "Falta API key. Usa Config para guardar NVIDIA NIM u otra API compatible.";
+        RefreshZenithAiSettingsUi();
+        SelectZenithAiTab(2);
     }
 
     private void ZenithAiCommandsButton_Click(object sender, RoutedEventArgs e)
     {
-        if (ZenithAiApiSettingsPanel.Visibility == Visibility.Visible)
-        {
-            ZenithAiApiSettingsPanel.Visibility = Visibility.Collapsed;
-            ZenithAiConfigButton.Content = "Config";
-        }
-
-        ZenithAiCommandsPanel.Visibility = ZenithAiCommandsPanel.Visibility == Visibility.Visible
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-        ZenithAiCommandsButton.Content = ZenithAiCommandsPanel.Visibility == Visibility.Visible ? "Ocultar comandos" : "Comandos";
-        ZenithAiStatusTextBlock.Text = ZenithAiCommandsPanel.Visibility == Visibility.Visible
-            ? "Elige un comando, revisalo y presiona Enviar para aplicarlo."
-            : "Comandos ocultos.";
+        SelectZenithAiTab(1);
+        ZenithAiStatusTextBlock.Text = "Haz clic en cualquier acción para aplicarla directamente en Zenith Audio.";
     }
 
-    private void ZenithAiCommandChip_Click(object sender, RoutedEventArgs e)
+    private async void ZenithAiQuickAction_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string command })
         {
             return;
         }
 
+        SelectZenithAiTab(0);
         ZenithAiQuestionTextBox.Text = command;
-        ZenithAiQuestionTextBox.Focus(FocusState.Programmatic);
-        ZenithAiQuestionTextBox.SelectionStart = ZenithAiQuestionTextBox.Text.Length;
-        ZenithAiStatusTextBlock.Text = "Comando cargado. Presiona Enviar para aplicarlo.";
+        await SendZenithAiQuestionAsync();
+    }
+
+    private void ZenithAiProviderPresetComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isSyncingZenithAiProviderPreset || ZenithAiProviderPresetComboBox?.SelectedItem is not ZenithAiProviderPreset preset)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(preset.Endpoint))
+        {
+            ZenithAiProviderTextBox.Text = preset.Name;
+            ZenithAiEndpointTextBox.Text = preset.Endpoint;
+            if (!string.IsNullOrWhiteSpace(preset.SuggestedModel))
+            {
+                ZenithAiModelTextBox.Text = preset.SuggestedModel;
+            }
+        }
+
+        _zenithAiFetchedModels.Clear();
+        ZenithAiModelsListView.ItemsSource = null;
+        ZenithAiModelFilterTextBox.Text = string.Empty;
+        ZenithAiModelsCountTextBlock.Text = $"{preset.Hint}. Pulsa 'Extraer modelos' para cargar su catálogo.";
+    }
+
+    private async void ZenithAiFetchModelsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var endpoint = ZenithAiEndpointTextBox.Text.Trim();
+        var apiKey = ZenithAiApiKeyBox.Password.Trim();
+
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            ZenithAiStatusTextBlock.Text = "Ingresa el endpoint del proveedor antes de extraer modelos.";
+            return;
+        }
+
+        ZenithAiFetchModelsButton.IsEnabled = false;
+        ZenithAiTestConnectionButton.IsEnabled = false;
+        ZenithAiModelsCountTextBlock.Text = "Consultando catálogo de modelos del proveedor...";
+        ZenithAiStatusTextBlock.Text = $"Extrayendo modelos desde {FormatEndpointForDiagnostics(endpoint)}...";
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            var models = await _zenithAiClient.FetchModelsAsync(endpoint, apiKey, cts.Token);
+            _zenithAiFetchedModels.Clear();
+            _zenithAiFetchedModels.AddRange(models);
+            ApplyZenithAiModelFilter();
+            ZenithAiModelsCountTextBlock.Text = $"{models.Count} modelos extraídos. Haz clic en uno para seleccionarlo.";
+            ZenithAiStatusTextBlock.Text = $"Catálogo cargado ({models.Count} modelos disponibles).";
+        }
+        catch (Exception ex)
+        {
+            ZenithAiModelsCountTextBlock.Text = "No se pudo extraer la lista automáticamente (puedes escribir el ID del modelo manualmente).";
+            ZenithAiStatusTextBlock.Text = $"Error al extraer modelos: {ex.Message}";
+        }
+        finally
+        {
+            ZenithAiFetchModelsButton.IsEnabled = true;
+            ZenithAiTestConnectionButton.IsEnabled = true;
+        }
+    }
+
+    private async void ZenithAiTestConnectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var provider = string.IsNullOrWhiteSpace(ZenithAiProviderTextBox.Text) ? "API compatible" : ZenithAiProviderTextBox.Text.Trim();
+        var endpoint = ZenithAiEndpointTextBox.Text.Trim();
+        var model = ZenithAiModelTextBox.Text.Trim();
+        var apiKey = ZenithAiApiKeyBox.Password.Trim();
+
+        ZenithAiTestConnectionButton.IsEnabled = false;
+        ZenithAiFetchModelsButton.IsEnabled = false;
+        ZenithAiStatusTextBlock.Text = $"Probando conexión con {provider} ({model})...";
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        try
+        {
+            var result = await _zenithAiClient.TestConnectionAsync(provider, endpoint, model, apiKey, cts.Token);
+            ZenithAiStatusTextBlock.Text = result;
+        }
+        catch (Exception ex)
+        {
+            ZenithAiStatusTextBlock.Text = $"Prueba fallida: {ex.Message}";
+        }
+        finally
+        {
+            ZenithAiTestConnectionButton.IsEnabled = true;
+            ZenithAiFetchModelsButton.IsEnabled = true;
+        }
+    }
+
+    private void ZenithAiModelFilterTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        ApplyZenithAiModelFilter();
+    }
+
+    private void ApplyZenithAiModelFilter()
+    {
+        if (ZenithAiModelsListView is null)
+        {
+            return;
+        }
+
+        var query = ZenithAiModelFilterTextBox?.Text?.Trim();
+        var filtered = string.IsNullOrWhiteSpace(query)
+            ? _zenithAiFetchedModels
+            : _zenithAiFetchedModels
+                .Where(m =>
+                    m.Id.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    m.Owner.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    m.ContextBadge.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+        ZenithAiModelsListView.ItemsSource = null;
+        ZenithAiModelsListView.ItemsSource = filtered;
+        if (_zenithAiFetchedModels.Count > 0)
+        {
+            ZenithAiModelsCountTextBlock.Text = string.IsNullOrWhiteSpace(query)
+                ? $"{filtered.Count} modelos extraídos. Haz clic en uno para seleccionarlo."
+                : $"{filtered.Count} de {_zenithAiFetchedModels.Count} modelos coinciden con '{query}'.";
+        }
+    }
+
+    private void ZenithAiModelsListView_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is ZenithAiModelInfo model)
+        {
+            ZenithAiModelTextBox.Text = model.Id;
+            ZenithAiStatusTextBlock.Text = $"Modelo seleccionado: {model.Id}. Pulsa 'Guardar y abrir Chat' para activarlo.";
+        }
     }
 
     private void ZenithAiSaveApiButton_Click(object sender, RoutedEventArgs e)
     {
+        var endpoint = ZenithAiClient.NormalizeChatEndpoint(ZenithAiEndpointTextBox.Text);
         var settings = new ZenithAiSettings(
             string.IsNullOrWhiteSpace(ZenithAiProviderTextBox.Text) ? "API compatible" : ZenithAiProviderTextBox.Text.Trim(),
-            ZenithAiEndpointTextBox.Text.Trim(),
+            endpoint,
             ZenithAiModelTextBox.Text.Trim(),
             ZenithAiApiKeyBox.Password.Trim());
         ZenithAiSettings.Save(settings);
         _zenithAiClient.ReloadSettings();
+        ZenithAiEndpointTextBox.Text = endpoint;
+        UpdateZenithAiModelBadge();
         ZenithAiStatusTextBlock.Text = _zenithAiClient.IsConfigured
-            ? $"API guardada: {_zenithAiClient.Settings.Provider}."
-            : "API guardada, pero falta API key.";
+            ? $"Configuración guardada: {_zenithAiClient.Settings.Provider} · {_zenithAiClient.Settings.Model}"
+            : "Configuración guardada, pero falta completar API key o modelo.";
+
+        if (_zenithAiClient.IsConfigured)
+        {
+            SelectZenithAiTab(0);
+        }
     }
 
     private void ZenithAiResetApiButton_Click(object sender, RoutedEventArgs e)
@@ -694,6 +1962,7 @@ public sealed partial class MainWindow : Window
         ZenithAiProviderTextBox.Text = ZenithAiSettings.DefaultProvider;
         ZenithAiEndpointTextBox.Text = ZenithAiSettings.DefaultEndpoint;
         ZenithAiModelTextBox.Text = ZenithAiSettings.DefaultModel;
+        SyncZenithAiProviderPresetSelection(ZenithAiSettings.DefaultProvider, ZenithAiSettings.DefaultEndpoint);
         var settings = new ZenithAiSettings(
             ZenithAiSettings.DefaultProvider,
             ZenithAiSettings.DefaultEndpoint,
@@ -701,7 +1970,8 @@ public sealed partial class MainWindow : Window
             ZenithAiApiKeyBox.Password.Trim());
         ZenithAiSettings.Save(settings);
         _zenithAiClient.ReloadSettings();
-        ZenithAiStatusTextBlock.Text = "NVIDIA NIM restaurado. Pega o conserva tu API key y presiona Guardar API.";
+        UpdateZenithAiModelBadge();
+        ZenithAiStatusTextBlock.Text = "NVIDIA NIM restaurado. Puedes pulsar 'Extraer modelos' o guardar.";
     }
 
     private async void ZenithAiSendButton_Click(object sender, RoutedEventArgs e)
@@ -735,22 +2005,36 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        SelectZenithAiTab(0);
         ZenithAiQuestionTextBox.Text = string.Empty;
         _zenithAiMessages.Add(new ZenithAiChatMessage("user", question));
 
+        // 1. Instant local direct player control commands (zero API latency)
+        var (handledPlayerCmd, playerReply) = await TryHandleZenithAiPlayerCommandAsync(question);
+        if (handledPlayerCmd)
+        {
+            _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", playerReply));
+            RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
+            RefreshZenithAiPlayerStrip();
+            ZenithAiStatusTextBlock.Text = "Acción aplicada directamente sobre Zenith Audio.";
+            return;
+        }
+
+        // 2. Instant local tone preset commands (zero API latency)
         if (TryHandleZenithAiToneCommand(question, out var localResponse))
         {
             _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", localResponse));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
-            ZenithAiStatusTextBlock.Text = "Perfil tonal aplicado localmente. No se uso la nube para este ajuste.";
+            RefreshZenithAiPlayerStrip();
+            ZenithAiStatusTextBlock.Text = "Perfil tonal aplicado localmente.";
             return;
         }
 
-        RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth(), "ZenithAI esta pensando...");
+        RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth(), "ZenithAI está pensando...");
         ZenithAiSendButton.IsEnabled = false;
         ZenithAiCancelButton.IsEnabled = true;
         ZenithAiClearButton.IsEnabled = false;
-        ZenithAiStatusTextBlock.Text = $"Consultando {_zenithAiClient.Settings.Provider} con modelo {_zenithAiClient.Settings.Model}...";
+        ZenithAiStatusTextBlock.Text = $"Consultando {_zenithAiClient.Settings.Provider} ({_zenithAiClient.Settings.Model})...";
 
         _zenithAiRequestCancellation?.Cancel();
         _zenithAiRequestCancellation?.Dispose();
@@ -770,22 +2054,36 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            var response = await _zenithAiClient.SendAsync(
+            var rawResponse = await _zenithAiClient.SendAsync(
                 _zenithAiMessages,
-                BuildZenithAiAudioContext(),
+                BuildZenithAiAudioContext(question),
                 linkedCancellation.Token);
 
-            _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", response));
+            var parsed = ZenithAiActionParser.Parse(rawResponse);
+            var actionNotes = await ExecuteZenithAiActionsAsync(parsed.Actions);
+            var finalMessage = parsed.CleanText;
+            if (actionNotes.Count > 0)
+            {
+                var summaryBlock = string.Join("\n", actionNotes.Select(note => $"✓ {note}"));
+                finalMessage = string.IsNullOrWhiteSpace(finalMessage)
+                    ? summaryBlock
+                    : $"{finalMessage}\n\n{summaryBlock}";
+            }
+
+            _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", finalMessage));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
-            ZenithAiStatusTextBlock.Text = "Listo. ZenithAI no usa modelos locales ni carga el CPU/GPU para inferencia.";
-            WriteZenithAiDiagnostic("request-ok");
+            RefreshZenithAiPlayerStrip();
+            ZenithAiStatusTextBlock.Text = actionNotes.Count > 0
+                ? $"Listo · {actionNotes.Count} acción(es) aplicada(s) directamente en el reproductor."
+                : $"Listo · {_zenithAiClient.Settings.Provider} ({_zenithAiClient.Settings.Model}).";
+            WriteZenithAiDiagnostic($"request-ok actions={actionNotes.Count}");
         }
         catch (OperationCanceledException)
         {
             var message = _zenithAiCancelRequestedByUser
                 ? "Consulta cancelada por el usuario."
                 : timeoutCancellation.IsCancellationRequested
-                    ? "La API no respondio dentro de 300 segundos. Prueba otro modelo de NVIDIA NIM, reduce la pregunta o revisa el endpoint."
+                    ? "La API no respondió dentro de 300 segundos. Prueba otro modelo en Config API o reduce la pregunta."
                     : "Consulta cancelada al cerrar ZenithAI.";
             _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", message));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
@@ -797,7 +2095,7 @@ public sealed partial class MainWindow : Window
             var provider = string.IsNullOrWhiteSpace(_zenithAiClient.Settings.Provider) ? "la API" : _zenithAiClient.Settings.Provider;
             _zenithAiMessages.Add(new ZenithAiChatMessage("assistant", $"No pude conectar con {provider}: {ex.Message}"));
             RenderZenithAiTranscript(ZenithAiTranscriptPanel, ZenithAiTranscriptScrollViewer, GetZenithAiTranscriptWidth());
-            ZenithAiStatusTextBlock.Text = "Revisa conexion, API key, endpoint o disponibilidad del modelo.";
+            ZenithAiStatusTextBlock.Text = "Revisa conexión, API key, endpoint o modelo en Config API.";
             WriteZenithAiDiagnostic($"request-error {ex.GetType().Name}: {ex.Message}");
         }
         finally
@@ -818,6 +2116,480 @@ public sealed partial class MainWindow : Window
             _zenithAiRequestCancellation = null;
             ScrollZenithAiTranscriptToEnd(ZenithAiTranscriptScrollViewer);
         }
+    }
+
+    private async Task<(bool Handled, string Response)> TryHandleZenithAiPlayerCommandAsync(string question)
+    {
+        var normalized = NormalizeCommandText(question);
+
+        // Only handle crisp, unambiguous direct commands locally; let complex multi-part questions go to the LLM
+        if (normalized.Length > 72 || normalized.Contains('?') ||
+            ContainsAny(normalized, "explica", "historia", "diferencia", "por que", "porque", "que es", "recomienda", "cuentame"))
+        {
+            return (false, string.Empty);
+        }
+
+        if (normalized is "siguiente" or "siguiente pista" or "pista siguiente" or "next" or "cambia de cancion" or "otra cancion")
+        {
+            await PlayNextTrackAsync(manual: true);
+            return (true, $"✓ Saltando a la siguiente pista: {TrackTitleTextBlock.Text}");
+        }
+
+        if (normalized is "anterior" or "pista anterior" or "anterior pista" or "prev" or "previous" or "vuelve a la anterior")
+        {
+            await PlayPreviousTrackAsync(manual: true);
+            return (true, $"✓ Volviendo a la pista anterior: {TrackTitleTextBlock.Text}");
+        }
+
+        if (normalized is "pausa" or "pausar" or "pausa o reanuda" or "reanuda" or "reanudar" or "play" or "reproducir")
+        {
+            ZenithAiPlayPauseButton_Click(this, new RoutedEventArgs());
+            return (true, _isPaused ? "✓ Reproducción pausada." : $"✓ Reproduciendo: {TrackTitleTextBlock.Text}");
+        }
+
+        if (normalized is "deten" or "detener" or "stop" or "para la musica")
+        {
+            if (StopButton.IsEnabled)
+            {
+                StopButton_Click(this, new RoutedEventArgs());
+            }
+
+            return (true, "✓ Reproducción detenida.");
+        }
+
+        if (ContainsAny(normalized, "cambia a asio", "usa asio", "modo asio", "pon asio", "activar asio"))
+        {
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("backend", new Dictionary<string, string> { ["value"] = "asio" }));
+            return (true, $"✓ {note}");
+        }
+
+        if (ContainsAny(normalized, "cambia a wasapi", "usa wasapi", "modo wasapi", "pon wasapi"))
+        {
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("backend", new Dictionary<string, string> { ["value"] = "wasapi" }));
+            return (true, $"✓ {note}");
+        }
+
+        if (ContainsAny(normalized, "abre panel asio", "panel asio", "control panel asio"))
+        {
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("open_tab", new Dictionary<string, string> { ["value"] = "asio_panel" }));
+            return (true, $"✓ {note}");
+        }
+
+        if (ContainsAny(normalized, "analiza pista", "anti fake", "antifake", "analizar pista"))
+        {
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("analyze", new Dictionary<string, string>()));
+            return (true, $"✓ {note}");
+        }
+
+        if (ContainsAny(normalized, "muestra albumes dsd", "muestra dsd", "ver dsd", "filtra dsd"))
+        {
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("filter", new Dictionary<string, string> { ["value"] = "dsd" }));
+            return (true, $"✓ {note}");
+        }
+
+        if (ContainsAny(normalized, "muestra hires", "muestra hi res", "ver hires", "filtra hires"))
+        {
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("filter", new Dictionary<string, string> { ["value"] = "hires" }));
+            return (true, $"✓ {note}");
+        }
+
+        var volMatch = System.Text.RegularExpressions.Regex.Match(normalized, @"(?:volumen|vol)\s*(?:a|al|en)?\s*(\d{1,3})");
+        if (volMatch.Success && int.TryParse(volMatch.Groups[1].Value, out var volValue))
+        {
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("volume", new Dictionary<string, string> { ["value"] = volValue.ToString(CultureInfo.InvariantCulture) }));
+            return (true, $"✓ {note}");
+        }
+
+        var outputMatch = System.Text.RegularExpressions.Regex.Match(normalized, @"^(?:cambia|cambiar|pon|usa|selecciona)\s+(?:la\s+)?salida\s+(?:a\s+)?(.+)$");
+        if (outputMatch.Success)
+        {
+            var query = outputMatch.Groups[1].Value.Trim();
+            var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("output", new Dictionary<string, string> { ["query"] = query }));
+            return (true, $"✓ {note}");
+        }
+
+        var playMatch = System.Text.RegularExpressions.Regex.Match(normalized, @"^(?:pon|reproduce|reproducir|toca)\s+(.+)$");
+        if (playMatch.Success)
+        {
+            var query = playMatch.Groups[1].Value.Trim();
+            if (!ContainsAny(query, "mas graves", "menos graves", "mas agudos", "menos agudos", "puro", "calido", "voces", "eq", "volumen", "asio", "wasapi"))
+            {
+                var note = await ExecuteSingleZenithAiActionAsync(new ZenithAiAction("play_track", new Dictionary<string, string> { ["query"] = query }));
+                return (true, $"✓ {note}");
+            }
+        }
+
+        return (false, string.Empty);
+    }
+
+    private async Task<List<string>> ExecuteZenithAiActionsAsync(IReadOnlyList<ZenithAiAction> actions)
+    {
+        var notes = new List<string>();
+        foreach (var action in actions)
+        {
+            try
+            {
+                var note = await ExecuteSingleZenithAiActionAsync(action);
+                if (!string.IsNullOrWhiteSpace(note))
+                {
+                    notes.Add(note);
+                }
+            }
+            catch (Exception ex)
+            {
+                notes.Add($"No se pudo ejecutar '{action.Name}': {ex.Message}");
+            }
+        }
+
+        return notes;
+    }
+
+    private async Task<string> ExecuteSingleZenithAiActionAsync(ZenithAiAction action)
+    {
+        action.Parameters.TryGetValue("value", out var value);
+        action.Parameters.TryGetValue("query", out var query);
+        value ??= string.Empty;
+        query ??= value;
+
+        switch (action.Name)
+        {
+            case "play_track":
+            case "play":
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    if (!string.IsNullOrWhiteSpace(_currentFilePath))
+                    {
+                        PlayButton_Click(this, new RoutedEventArgs());
+                        return $"Reproduciendo pista actual: {TrackTitleTextBlock.Text}";
+                    }
+
+                    return "No hay pista cargada para reproducir.";
+                }
+
+                var matchedTrack = FindBestLibraryTrackMatch(query);
+                if (matchedTrack is null)
+                {
+                    return $"No encontré una pista que coincida con '{query}' en tu biblioteca ({_libraryTracks.Count} pistas).";
+                }
+
+                StopCurrentPlaybackForTrackChange();
+                await LoadLibraryTrackAsync(matchedTrack, play: true);
+                return $"Reproduciendo '{matchedTrack.Title}' ({matchedTrack.Format}).";
+
+            case "pause":
+                if (StopButton.IsEnabled && !_isPaused)
+                {
+                    PauseButton_Click(this, new RoutedEventArgs());
+                }
+
+                return "Reproducción pausada.";
+
+            case "resume":
+                if (StopButton.IsEnabled && _isPaused)
+                {
+                    PauseButton_Click(this, new RoutedEventArgs());
+                }
+                else if (!string.IsNullOrWhiteSpace(_currentFilePath) && !StopButton.IsEnabled)
+                {
+                    PlayButton_Click(this, new RoutedEventArgs());
+                }
+
+                return "Reproducción reanudada.";
+
+            case "stop":
+                if (StopButton.IsEnabled)
+                {
+                    StopButton_Click(this, new RoutedEventArgs());
+                }
+
+                return "Reproducción detenida.";
+
+            case "next":
+                await PlayNextTrackAsync(manual: true);
+                return $"Siguiente pista: {TrackTitleTextBlock.Text}";
+
+            case "previous":
+                await PlayPreviousTrackAsync(manual: true);
+                return $"Pista anterior: {TrackTitleTextBlock.Text}";
+
+            case "volume":
+                if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var vol))
+                {
+                    var clamped = Math.Clamp(vol, 0, 100);
+                    VolumeSlider.Value = clamped;
+                    return $"Volumen ajustado a {(int)clamped}%.";
+                }
+
+                return "Valor de volumen inválido.";
+
+            case "shuffle":
+                _shuffleEnabled = value.Equals("on", StringComparison.OrdinalIgnoreCase) ||
+                                  value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                                  (value.Equals("toggle", StringComparison.OrdinalIgnoreCase) && !_shuffleEnabled);
+                UpdateShuffleButtonVisual();
+                return _shuffleEnabled ? "Modo aleatorio activado." : "Modo aleatorio desactivado.";
+
+            case "seek":
+                var secText = action.Parameters.TryGetValue("seconds", out var sVal) ? sVal : value;
+                if (double.TryParse(secText, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds))
+                {
+                    var target = TimeSpan.FromSeconds(Math.Max(0, seconds));
+                    SeekFallbackPlayer(target);
+                    return $"Posición movida a {FormatTime(target)}.";
+                }
+
+                return "Posición de tiempo inválida.";
+
+            case "backend":
+                var normalizedBackend = value.Trim().ToLowerInvariant();
+                var targetIndex = normalizedBackend switch
+                {
+                    "wasapi" or "zenith" or "zenithwasapi" => 0,
+                    "asio" or "asionative" or "dsd" => 1,
+                    "bass" or "basswasapi" => 2,
+                    "mpv" or "mpvwasapi" => 3,
+                    _ => -1
+                };
+                if (targetIndex < 0 || targetIndex >= BackendComboBox.Items.Count)
+                {
+                    return $"Motor '{value}' no reconocido.";
+                }
+
+                if (targetIndex == 1 && _asioDrivers.Count == 0)
+                {
+                    return "No se detectaron drivers ASIO en Windows para cambiar a ASIO.";
+                }
+
+                BackendComboBox.SelectedIndex = targetIndex;
+                return $"Motor cambiado a {GetBackendShortLabel(GetSelectedBackend())}.";
+
+            case "output":
+                var devIdx = _outputDevices.FindIndex(d =>
+                    d.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    d.KindLabel.Contains(query, StringComparison.OrdinalIgnoreCase));
+                if (devIdx < 0)
+                {
+                    return $"No encontré una salida de audio que coincida con '{query}'.";
+                }
+
+                OutputDeviceComboBox.SelectedIndex = devIdx;
+                return $"Salida cambiada a {_outputDevices[devIdx].Name}.";
+
+            case "exclusive":
+                var enableExcl = value.Equals("on", StringComparison.OrdinalIgnoreCase) || value.Equals("true", StringComparison.OrdinalIgnoreCase);
+                if (enableExcl && !HasDedicatedDacDriver(GetSelectedOutputDevice()))
+                {
+                    return "No se activó Exclusivo porque la salida actual no es un controlador DAC USB dedicado.";
+                }
+
+                ExclusiveModeToggle.IsOn = enableExcl;
+                return enableExcl ? "Modo Exclusivo activado." : "Modo Exclusivo desactivado.";
+
+            case "dsd_mode":
+                var modeIdx = value.ToLowerInvariant() switch
+                {
+                    "pcm" or "pcm_fir" or "fir" => 0,
+                    "dop" => 1,
+                    "native" or "nativo" => 2,
+                    _ => -1
+                };
+                if (modeIdx >= 0 && modeIdx < DsdModeComboBox.Items.Count)
+                {
+                    DsdModeComboBox.SelectedIndex = modeIdx;
+                    return $"Modo DSD actualizado ({(DsdModeComboBox.SelectedItem as ComboBoxItem)?.Content}).";
+                }
+
+                return "Modo DSD no reconocido.";
+
+            case "dsd_gain":
+                var gainIdx = value switch
+                {
+                    "0" => 0,
+                    "3" => 1,
+                    "6" => 2,
+                    _ => -1
+                };
+                if (gainIdx >= 0 && DsdGainComboBox is not null)
+                {
+                    DsdGainComboBox.SelectedIndex = gainIdx;
+                    return $"Ganancia DSD ajustada a +{value} dB.";
+                }
+
+                return "Ganancia DSD no reconocida (usa 0, 3 o 6).";
+
+            case "dsd_rate":
+                if (DsdPcmRateComboBox is not null)
+                {
+                    for (var i = 0; i < DsdPcmRateComboBox.Items.Count; i++)
+                    {
+                        if (DsdPcmRateComboBox.Items[i] is ComboBoxItem { Tag: string tag } && tag == value)
+                        {
+                            DsdPcmRateComboBox.SelectedIndex = i;
+                            return $"Frecuencia PCM para DSD ajustada ({(DsdPcmRateComboBox.Items[i] as ComboBoxItem)?.Content}).";
+                        }
+                    }
+                }
+
+                return "Frecuencia PCM DSD no reconocida.";
+
+            case "tone":
+                var wantsBypass = action.Parameters.TryGetValue("bypass", out var bp) && bp.Equals("true", StringComparison.OrdinalIgnoreCase);
+                if (wantsBypass || value.Equals("puro", StringComparison.OrdinalIgnoreCase))
+                {
+                    ApplyToneProfile("Audio puro (ZenithAI)", eqEnabled: false, dspBypassed: true, preampDb: 0, subBassDb: 0, presenceDb: 0, airDb: 0);
+                    return "DSP en bypass (audio plano / bit-transparente).";
+                }
+
+                var preamp = ParseParamDouble(action.Parameters, "preamp", 0, -12, 12);
+                var sub = ParseParamDouble(action.Parameters, "sub", 0, -6, 6);
+                var presence = ParseParamDouble(action.Parameters, "presence", 0, -6, 6);
+                var air = ParseParamDouble(action.Parameters, "air", 0, -6, 6);
+                var maxBoost = Math.Max(0, Math.Max(sub, Math.Max(presence, air)));
+                if (preamp == 0 && maxBoost > 0)
+                {
+                    preamp = -Math.Ceiling(maxBoost * 2.0) / 2.0; // Automatic anti-clipping preamp
+                }
+
+                ApplyToneProfile("EQ personalizado (ZenithAI)", eqEnabled: true, dspBypassed: false, preamp, sub, presence, air);
+                return $"EQ aplicado: Pre {FormatDb(preamp)}, Sub {FormatDb(sub)}, Presencia {FormatDb(presence)}, Aire {FormatDb(air)}.";
+
+            case "filter":
+                if (value.Equals("dsd", StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowDsdLibraryButton_Click(this, new RoutedEventArgs());
+                    return $"Biblioteca filtrada: {_visibleLibraryTracks.Count} pistas DSD.";
+                }
+
+                if (value.Equals("hires", StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowHiResLibraryButton_Click(this, new RoutedEventArgs());
+                    return $"Biblioteca filtrada: {_visibleLibraryTracks.Count} pistas Hi-Res PCM.";
+                }
+
+                if (value.Equals("folders", StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowFolderBrowser();
+                    return $"Mostrando {_libraryFolders.Count} carpeta(s) de biblioteca.";
+                }
+
+                if (value.StartsWith("search:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var searchTerm = value["search:".Length..].Trim();
+                    ShowTrackBrowser("Explorador de biblioteca", _libraryTracks);
+                    LibrarySearchBox.Text = searchTerm;
+                    ApplyLibrarySearch();
+                    return $"Buscador de biblioteca filtrado por '{searchTerm}'.";
+                }
+
+                ShowTrackBrowser("Explorador de biblioteca", _libraryTracks);
+                return $"Mostrando toda la biblioteca ({_libraryTracks.Count} pistas).";
+
+            case "analyze":
+                RefreshAntiFakeReport(showStatus: true);
+                return $"Análisis Anti-Fake: {LabScoreTextBlock.Text} · {LabAuthenticityTextBlock.Text}";
+
+            case "open_tab":
+                switch (value.ToLowerInvariant())
+                {
+                    case "signal":
+                        SelectRightPanelTab(0);
+                        return "Panel derecho cambiado a Cadena de señal.";
+                    case "tone":
+                        SelectRightPanelTab(1);
+                        return "Panel derecho cambiado a Control de tono / EQ.";
+                    case "settings":
+                        ShowSettingsButton_Click(this, new RoutedEventArgs());
+                        return "Panel derecho cambiado a Ajustes del sistema.";
+                    case "asio_panel":
+                        OpenAsioControlPanelButton_Click(this, new RoutedEventArgs());
+                        return "Panel de control ASIO abierto.";
+                }
+
+                return string.Empty;
+
+            default:
+                return string.Empty;
+        }
+    }
+
+    private LibraryTrack? FindBestLibraryTrackMatch(string query)
+    {
+        if (_libraryTracks.Count == 0 || string.IsNullOrWhiteSpace(query))
+        {
+            return null;
+        }
+
+        var normalizedQuery = NormalizeCommandText(query);
+        var tokens = normalizedQuery.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0)
+        {
+            return null;
+        }
+
+        LibraryTrack? bestTrack = null;
+        var bestScore = 0;
+
+        foreach (var track in _libraryTracks)
+        {
+            if (track.Extension.Equals(".iso", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var normTitle = NormalizeCommandText(track.Title);
+            var normDir = NormalizeCommandText(Path.GetFileName(Path.GetDirectoryName(track.Path) ?? track.Folder));
+            var score = 0;
+
+            if (normTitle.Equals(normalizedQuery, StringComparison.Ordinal))
+            {
+                score += 100;
+            }
+            else if (normTitle.Contains(normalizedQuery, StringComparison.Ordinal))
+            {
+                score += 50;
+            }
+            else if (normDir.Contains(normalizedQuery, StringComparison.Ordinal))
+            {
+                score += 35;
+            }
+
+            foreach (var token in tokens)
+            {
+                if (token.Length < 2)
+                {
+                    continue;
+                }
+
+                if (normTitle.Contains(token, StringComparison.Ordinal))
+                {
+                    score += 12;
+                }
+                else if (normDir.Contains(token, StringComparison.Ordinal))
+                {
+                    score += 8;
+                }
+                else if (track.Format.Contains(token, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 4;
+                }
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestTrack = track;
+            }
+        }
+
+        return bestScore >= 8 ? bestTrack : null;
+    }
+
+    private static double ParseParamDouble(IReadOnlyDictionary<string, string> parameters, string key, double fallback, double min, double max)
+    {
+        return parameters.TryGetValue(key, out var raw) &&
+               double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Clamp(parsed, min, max)
+            : fallback;
     }
 
     private static string ZenithAiDiagnosticPath => Path.Combine(
@@ -981,21 +2753,136 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void DsdModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void DsdModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        UpdatePlaybackAvailabilityV2();
-    }
-
-    private void ExclusiveModeToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        if (ModeTextBlock is null || OutputPathTextBlock is null)
+        if (StatusInfoBar is null)
         {
             return;
         }
 
+        SaveAudioSettings();
+        UpdatePlaybackAvailabilityV2();
+        UpdateSignalChain();
+        await HotSwitchActivePlaybackAsync();
+    }
+
+    private async void DsdPlaybackOption_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (StatusInfoBar is null)
+        {
+            return;
+        }
+
+        SaveAudioSettings();
+        UpdateSignalChain();
+        await HotSwitchActivePlaybackAsync();
+    }
+
+    private async void ExclusiveModeToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isRevertingExclusiveToggle || _isLoadingAudioSettings || ModeTextBlock is null || OutputPathTextBlock is null)
+        {
+            return;
+        }
+
+        if (ExclusiveModeToggle.IsOn && !HasDedicatedDacDriver(GetSelectedOutputDevice()))
+        {
+            SetExclusiveToggleSilently(false);
+            SaveAudioSettings();
+            ApplyOutputDeviceSettings();
+            UpdatePlaybackAvailabilityV2();
+            UpdateSignalChain();
+            await ShowMissingDacDriverAlertAsync(GetSelectedOutputDevice());
+            return;
+        }
+
+        SaveAudioSettings();
         ApplyOutputDeviceSettings();
         UpdatePlaybackAvailabilityV2();
         UpdateSignalChain();
+        await HotSwitchActivePlaybackAsync();
+    }
+
+    private static bool HasDedicatedDacDriver(OutputDeviceOption? device)
+    {
+        return device is not null && !device.IsSystemDefault && device.IsLikelyDac;
+    }
+
+    private void SetExclusiveToggleSilently(bool isOn)
+    {
+        if (ExclusiveModeToggle is null || ExclusiveModeToggle.IsOn == isOn)
+        {
+            return;
+        }
+
+        _isRevertingExclusiveToggle = true;
+        try
+        {
+            ExclusiveModeToggle.IsOn = isOn;
+        }
+        finally
+        {
+            _isRevertingExclusiveToggle = false;
+        }
+    }
+
+    private void EnforceExclusiveDriverGuard(bool showAlert)
+    {
+        if (ExclusiveModeToggle is null || !ExclusiveModeToggle.IsOn)
+        {
+            return;
+        }
+
+        var selectedDevice = GetSelectedOutputDevice();
+        if (HasDedicatedDacDriver(selectedDevice))
+        {
+            return;
+        }
+
+        SetExclusiveToggleSilently(false);
+        SaveAudioSettings();
+
+        if (showAlert)
+        {
+            _ = ShowMissingDacDriverAlertAsync(selectedDevice);
+        }
+    }
+
+    private async Task ShowMissingDacDriverAlertAsync(OutputDeviceOption? device)
+    {
+        if (_isShowingExclusiveAlert || RootGrid?.XamlRoot is null)
+        {
+            return;
+        }
+
+        _isShowingExclusiveAlert = true;
+        try
+        {
+            var deviceName = device is null || device.IsSystemDefault
+                ? "Salida predeterminada de Windows"
+                : device.Name;
+
+            var dialog = new ContentDialog
+            {
+                Title = "Controlador DAC dedicado no detectado",
+                Content =
+                    $"La salida actual ({deviceName}) no corresponde a un controlador DAC USB dedicado " +
+                    "(por ejemplo: FiiO USB Audio Device, ZiShan, Topping, iFi, SMSL, XMOS, etc.).\n\n" +
+                    "El Modo Exclusivo se ha desactivado automáticamente y permanecerá desactivado por defecto para evitar ruido blanco o incompatibilidades con salidas integradas (como el jack 3.5 mm).\n\n" +
+                    "Cuando conectes tu DAC USB y lo selecciones en el selector de salida, podrás activar el Modo Exclusivo.",
+                CloseButtonText = "Entendido",
+                XamlRoot = RootGrid.XamlRoot
+            };
+
+            await dialog.ShowAsync();
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _isShowingExclusiveAlert = false;
+        }
     }
 
     private void LatencySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -1122,8 +3009,8 @@ public sealed partial class MainWindow : Window
 
         StatusInfoBar.Severity = _toneSettings.IsActive ? InfoBarSeverity.Informational : InfoBarSeverity.Success;
         StatusInfoBar.Message = _toneSettings.IsActive
-            ? "Control de tono activo en RAM y en tiempo real para DSF RAM stream. FLAC/MP3 por Windows requieren DSP Media Foundation o EQ de MPV/BASS."
-            : "Control de tono en bypass: salida plana.";
+            ? "Control de tono activo en tiempo real en Zenith WASAPI (DSD->PCM FIR, FLAC, WAV, AIFF, MP3). En DoP nativo el DSP se omite."
+            : "Control de tono en bypass: salida bit-transparente.";
     }
 
     private bool TryHandleZenithAiToneCommand(string question, out string response)
@@ -1421,41 +3308,103 @@ public sealed partial class MainWindow : Window
         StatusInfoBar.Message = $"Escáner de biblioteca configurado en {(int)e.NewValue} hilos";
     }
 
-    private void UseWindowsMusicButton_Click(object sender, RoutedEventArgs e)
+    private async void UseWindowsMusicButton_Click(object sender, RoutedEventArgs e)
     {
         var musicPath = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
-        if (string.IsNullOrWhiteSpace(musicPath))
+        if (string.IsNullOrWhiteSpace(musicPath) || !Directory.Exists(musicPath))
+        {
+            var fallbackMusicPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Music");
+            if (Directory.Exists(fallbackMusicPath))
+            {
+                musicPath = fallbackMusicPath;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(musicPath) || !Directory.Exists(musicPath))
         {
             StatusInfoBar.Severity = InfoBarSeverity.Warning;
-            StatusInfoBar.Message = "No se encontro la carpeta Musica de Windows";
+            StatusInfoBar.Message = "No se encontró la carpeta Música de Windows";
             return;
         }
 
-        AddLibraryFolder(musicPath);
+        await AddLibraryFolderAsync(musicPath);
     }
 
     private async void AddMusicFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new FolderPicker
-        {
-            SuggestedStartLocation = PickerLocationId.MusicLibrary
-        };
+        await PickAndAddMusicFolderAsync();
+    }
 
-        picker.FileTypeFilter.Add("*");
-        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-
-        var folder = await picker.PickSingleFolderAsync();
-        if (folder is null)
+    private async void ShowMusicFoldersButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_libraryFolders.Count == 0)
         {
+            var added = await PickAndAddMusicFolderAsync();
+            if (!added)
+            {
+                ShowFolderBrowser();
+            }
+
             return;
         }
 
-        AddLibraryFolder(folder.Path);
+        ShowFolderBrowser();
     }
 
-    private void ShowMusicFoldersButton_Click(object sender, RoutedEventArgs e)
+    private async Task<bool> PickAndAddMusicFolderAsync()
     {
-        ShowFolderBrowser();
+        try
+        {
+            var folderPath = await PickMusicFolderPathAsync();
+            if (string.IsNullOrWhiteSpace(folderPath))
+            {
+                return false;
+            }
+
+            await AddLibraryFolderAsync(folderPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Error;
+            StatusInfoBar.Message = $"No se pudo abrir el selector de carpetas: {ex.Message}";
+            return false;
+        }
+    }
+
+    private async Task<string?> PickMusicFolderPathAsync()
+    {
+        try
+        {
+            var modernPicker = new Microsoft.Windows.Storage.Pickers.FolderPicker(AppWindow.Id)
+            {
+                SuggestedStartLocation = Microsoft.Windows.Storage.Pickers.PickerLocationId.MusicLibrary
+            };
+            var picked = await modernPicker.PickSingleFolderAsync();
+            return picked?.Path;
+        }
+        catch (Exception)
+        {
+            var legacyPicker = new FolderPicker
+            {
+                SuggestedStartLocation = PickerLocationId.MusicLibrary
+            };
+            legacyPicker.FileTypeFilter.Add("*");
+            InitializeWithWindow.Initialize(legacyPicker, WindowNative.GetWindowHandle(this));
+
+            var folder = await legacyPicker.PickSingleFolderAsync();
+            return folder?.Path;
+        }
+    }
+
+    private async void LibraryFoldersListView_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is string folderPath && !string.IsNullOrWhiteSpace(folderPath))
+        {
+            await OpenLibraryFolderAsync(folderPath);
+        }
     }
 
     private void ShowDsdLibraryButton_Click(object sender, RoutedEventArgs e)
@@ -1470,9 +3419,21 @@ public sealed partial class MainWindow : Window
 
     private void ShowSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        RightPanelScrollViewer.ChangeView(null, RightPanelScrollViewer.ScrollableHeight, null);
+        SelectRightPanelTab(2);
+        var width = _lastLayoutWidth > 0 ? _lastLayoutWidth : RootGrid.ActualWidth;
+        if (width < 780)
+        {
+            _compactPaneMode = 2;
+            ApplyResponsiveLayout(width, _lastLayoutHeight > 0 ? _lastLayoutHeight : RootGrid.ActualHeight);
+        }
+        else if (width < 1120)
+        {
+            _showInspectorInNarrow = true;
+            ApplyResponsiveLayout(width, _lastLayoutHeight > 0 ? _lastLayoutHeight : RootGrid.ActualHeight);
+        }
+
         StatusInfoBar.Severity = InfoBarSeverity.Informational;
-        StatusInfoBar.Message = "Los ajustes avanzados están disponibles en el panel derecho";
+        StatusInfoBar.Message = "Ajustes de salida, ASIO, DSD y biblioteca abiertos en el panel derecho.";
     }
 
     private void LibrarySearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
@@ -1485,7 +3446,7 @@ public sealed partial class MainWindow : Window
         ApplyLibrarySearch();
     }
 
-    private void LibraryBrowserListView_ItemClick(object sender, ItemClickEventArgs e)
+    private async void LibraryBrowserListView_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is LibraryBrowserItem item)
         {
@@ -1503,10 +3464,7 @@ public sealed partial class MainWindow : Window
 
             if (!string.IsNullOrWhiteSpace(item.FolderPath))
             {
-                LibraryFoldersListView.SelectedItem = item.FolderPath;
-                ShowTrackBrowser(
-                    Path.GetFileName(item.FolderPath.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } folderName ? folderName : item.FolderPath,
-                    _libraryTracks.Where(track => track.Folder.Equals(item.FolderPath, StringComparison.OrdinalIgnoreCase)));
+                await OpenLibraryFolderAsync(item.FolderPath);
                 return;
             }
         }
@@ -1519,14 +3477,18 @@ public sealed partial class MainWindow : Window
 
         if (e.ClickedItem is string folder)
         {
-            LibraryFoldersListView.SelectedItem = folder;
-            ShowTrackBrowser(Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } folderName ? folderName : folder,
-                _libraryTracks.Where(track => track.Folder.Equals(folder, StringComparison.OrdinalIgnoreCase)));
+            await OpenLibraryFolderAsync(folder);
         }
     }
 
     private async void LibraryBrowserListView_DoubleTapped(object sender, Microsoft.UI.Xaml.Input.DoubleTappedRoutedEventArgs e)
     {
+        if (LibraryBrowserListView.SelectedItem is LibraryBrowserItem { FolderPath: { Length: > 0 } folderPath, IsHeader: false })
+        {
+            await OpenLibraryFolderAsync(folderPath);
+            return;
+        }
+
         var selectedTrack = LibraryBrowserListView.SelectedItem switch
         {
             LibraryBrowserItem { Track: { } itemTrack, IsHeader: false } => itemTrack,
@@ -1541,6 +3503,12 @@ public sealed partial class MainWindow : Window
 
         StopCurrentPlaybackForTrackChange();
         await LoadLibraryTrackAsync(selectedTrack, play: true);
+
+        if (_lastLayoutWidth > 0 && _lastLayoutWidth < 780)
+        {
+            _compactPaneMode = 0;
+            ApplyResponsiveLayout(_lastLayoutWidth, _lastLayoutHeight);
+        }
     }
 
     private void LoadLibraryTrack(LibraryTrack track, bool play)
@@ -1634,14 +3602,34 @@ public sealed partial class MainWindow : Window
 
     private void PlaybackTimer_Tick(object? sender, object e)
     {
-        if (!_usingFallbackPlayer || _isSeeking)
+        if (_isSeeking)
         {
             return;
         }
 
-        var session = _fallbackMediaPlayer.PlaybackSession;
-        var position = session.Position;
-        var duration = session.NaturalDuration;
+        TimeSpan position;
+        TimeSpan duration;
+
+        if (_usingAsioEngine)
+        {
+            position = _asioEngine.Position;
+            duration = _asioEngine.Duration;
+        }
+        else if (_usingWasapiEngine)
+        {
+            position = _wasapiEngine.Position;
+            duration = _wasapiEngine.Duration;
+        }
+        else if (_usingFallbackPlayer)
+        {
+            var session = _fallbackMediaPlayer.PlaybackSession;
+            position = session.Position;
+            duration = session.NaturalDuration;
+        }
+        else
+        {
+            return;
+        }
 
         _isUpdatingPlaybackProgress = true;
         PlaybackProgressSlider.Maximum = Math.Max(duration.TotalSeconds, 1);
@@ -1660,10 +3648,38 @@ public sealed partial class MainWindow : Window
 
     private void SeekFallbackPlayer(TimeSpan position)
     {
+        if (_usingAsioEngine)
+        {
+            var asioDuration = _asioEngine.Duration;
+            if (asioDuration <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            var clamped = TimeSpan.FromSeconds(Math.Clamp(position.TotalSeconds, 0, asioDuration.TotalSeconds));
+            _asioEngine.Seek(clamped);
+            CurrentTimeTextBlock.Text = FormatTime(clamped);
+            return;
+        }
+
+        if (_usingWasapiEngine)
+        {
+            var wasapiDuration = _wasapiEngine.Duration;
+            if (wasapiDuration <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            var clamped = TimeSpan.FromSeconds(Math.Clamp(position.TotalSeconds, 0, wasapiDuration.TotalSeconds));
+            _wasapiEngine.Seek(clamped);
+            CurrentTimeTextBlock.Text = FormatTime(clamped);
+            return;
+        }
+
         if (!_usingFallbackPlayer)
         {
-            StatusInfoBar.Severity = InfoBarSeverity.Informational;
-            StatusInfoBar.Message = "Seek desde la barra está disponible en reproducción Windows/PCM fallback.";
+            _audioEngine.Seek(position);
+            CurrentTimeTextBlock.Text = FormatTime(position);
             return;
         }
 
@@ -1718,13 +3734,42 @@ public sealed partial class MainWindow : Window
         var decode = decodeOverride;
         if (string.IsNullOrWhiteSpace(decode))
         {
-            if (_usingFallbackPlayer && DsdExtensions.Contains(currentExtension))
+            if (_usingAsioEngine && _asioEngine.ActiveReport is { } asioReport)
             {
-                decode = "Decodificación DSD a PCM en stream";
+                decode = asioReport.DecodeLabel;
+            }
+            else if (_usingWasapiEngine && _wasapiEngine.ActiveReport is { } activeReport)
+            {
+                decode = activeReport.DecodeLabel;
+            }
+            else if (backend == AudioBackend.AsioNative)
+            {
+                var asioDriver = GetSelectedAsioDriver()?.Name ?? "ASIO";
+                decode = DsdExtensions.Contains(currentExtension)
+                    ? $"ASIO DSD Nativo ({asioDriver})"
+                    : $"ASIO PCM ({asioDriver})";
+            }
+            else if (_usingFallbackPlayer && DsdExtensions.Contains(currentExtension))
+            {
+                decode = "DSD -> PCM FIR (stream)";
             }
             else if (_usingFallbackPlayer)
             {
                 decode = "Windows Media Foundation";
+            }
+            else if (backend == AudioBackend.ZenithWasapi)
+            {
+                if (DsdExtensions.Contains(currentExtension))
+                {
+                    var dsdOptions = GetCurrentDsdPlaybackOptions();
+                    decode = dsdOptions.OutputMode == DsdOutputMode.DoPExclusive
+                        ? "Zenith WASAPI (DoP / FIR)"
+                        : "Zenith WASAPI (DSD->PCM FIR)";
+                }
+                else
+                {
+                    decode = "Zenith WASAPI integrado";
+                }
             }
             else if (IsNativeBackendAvailable(backend, effectivePath))
             {
@@ -1732,13 +3777,11 @@ public sealed partial class MainWindow : Window
             }
             else if (DsdExtensions.Contains(currentExtension))
             {
-                decode = currentExtension.Equals(".dsf", StringComparison.OrdinalIgnoreCase)
-                    ? "DSF -> PCM en RAM"
-                    : "DSD nativo requerido";
+                decode = "Zenith WASAPI (DSD->PCM FIR)";
             }
             else
             {
-                decode = "Fallback de Windows";
+                decode = "Zenith WASAPI integrado";
             }
         }
 
@@ -1751,12 +3794,14 @@ public sealed partial class MainWindow : Window
         SignalDitherTextBlock.Text = GetDitherStatus(_currentFilePath);
         SignalBufferTextBlock.Text = $"{(int)(BufferSlider?.Value ?? 100)} ms | {_bufferProfile}";
         UpdateSignalVisualState(hasTrack: true);
+        RefreshZenithAiPlayerStrip();
     }
 
     private void UpdateSignalVisualState(bool hasTrack)
     {
         var status = SignalBitPerfectTextBlock?.Text ?? string.Empty;
-        var strict = status.Contains("Probable bit-perfect", StringComparison.OrdinalIgnoreCase);
+        var strict = status.Contains("Bit-perfect confirmado", StringComparison.OrdinalIgnoreCase) ||
+                     status.Contains("Probable bit-perfect", StringComparison.OrdinalIgnoreCase);
         var dspActive = _toneSettings.IsActive;
         var warning = status.Contains("No confirmado", StringComparison.OrdinalIgnoreCase) ||
                       status.Contains("Windows", StringComparison.OrdinalIgnoreCase);
@@ -2305,6 +4350,65 @@ public sealed partial class MainWindow : Window
 
     private string GetBitPerfectStatus(string filePath, string? decode)
     {
+        if (_usingAsioEngine && _asioEngine.ActiveReport is { } asioReport)
+        {
+            if (asioReport.IsNativeDsd)
+            {
+                return $"Bit-perfect confirmado: ASIO {asioReport.SourceCodec} Nativo ({asioReport.SampleRate / 1_000_000.0:0.##} MHz / 1-bit)";
+            }
+
+            if (asioReport.IsBitPerfect)
+            {
+                return $"Bit-perfect confirmado: ASIO PCM ({asioReport.SampleRate / 1000.0:0.#} kHz/{asioReport.BitDepth}-bit)";
+            }
+
+            if (_toneSettings.IsActive)
+            {
+                return "No bit-perfect: DSP/EQ activo en ASIO";
+            }
+
+            if (asioReport.IsResampled)
+            {
+                return $"No bit-perfect: ASIO remuestreado a {asioReport.SampleRate / 1000.0:0.#} kHz";
+            }
+
+            return $"ASIO PCM ({asioReport.SampleRate / 1000.0:0.#} kHz/{asioReport.BitDepth}-bit)";
+        }
+
+        if (_usingWasapiEngine && _wasapiEngine.ActiveReport is { } report)
+        {
+            if (report.IsDoP)
+            {
+                return "Bit-perfect confirmado: DoP v1.1 (DSD sobre PCM exclusivo)";
+            }
+
+            if (report.IsBitPerfect)
+            {
+                return $"Bit-perfect confirmado: WASAPI Exclusivo ({report.OutputSampleRate / 1000.0:0.#} kHz/{report.OutputBitDepth}-bit)";
+            }
+
+            if (_toneSettings.IsActive)
+            {
+                return "No bit-perfect: DSP/EQ activo";
+            }
+
+            if (report.IsDsdSource)
+            {
+                return report.IsExclusive
+                    ? $"DSD -> PCM FIR exclusivo ({report.OutputSampleRate / 1000.0:0.#} kHz/{report.OutputBitDepth}-bit)"
+                    : $"No bit-perfect: DSD convertido a PCM compartido ({report.OutputSampleRate / 1000.0:0.#} kHz)";
+            }
+
+            if (report.IsResampled)
+            {
+                return $"No bit-perfect: remuestreado a {report.OutputSampleRate / 1000.0:0.#} kHz";
+            }
+
+            return report.IsExclusive
+                ? "No bit-perfect: volumen software distinto de 100%"
+                : "No confirmado: WASAPI modo compartido";
+        }
+
         if (_toneSettings.IsActive)
         {
             return "No bit-perfect: DSP/EQ activo";
@@ -2322,7 +4426,8 @@ public sealed partial class MainWindow : Window
             return "No confirmado: modo compartido";
         }
 
-        if (decode?.Contains("nativa", StringComparison.OrdinalIgnoreCase) == true ||
+        if (decode?.Contains("Zenith WASAPI", StringComparison.OrdinalIgnoreCase) == true ||
+            decode?.Contains("nativa", StringComparison.OrdinalIgnoreCase) == true ||
             decode?.Contains("BASS WASAPI", StringComparison.OrdinalIgnoreCase) == true ||
             decode?.Contains("MPV WASAPI", StringComparison.OrdinalIgnoreCase) == true)
         {
@@ -2407,6 +4512,8 @@ public sealed partial class MainWindow : Window
             CoverArtImage.Visibility = Visibility.Visible;
             CoverPlaceholderPanel.Visibility = Visibility.Collapsed;
             CoverHintTextBlock.Text = Path.GetFileName(coverPath);
+            var coverMime = coverPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ? "image/png" : "image/jpeg";
+            UpdateCachedCoverBytes(await File.ReadAllBytesAsync(coverPath), coverMime);
             await ApplyDynamicAccentFromFileAsync(coverPath);
         }
         catch (Exception)
@@ -2442,6 +4549,7 @@ public sealed partial class MainWindow : Window
             CoverArtImage.Visibility = Visibility.Visible;
             CoverPlaceholderPanel.Visibility = Visibility.Collapsed;
             CoverHintTextBlock.Text = "Carátula embebida";
+            UpdateCachedCoverBytes(bytes, picture.MimeType);
             await ApplyDynamicAccentFromBytesAsync(bytes);
             return true;
         }
@@ -2457,6 +4565,7 @@ public sealed partial class MainWindow : Window
         CoverArtImage.Visibility = Visibility.Collapsed;
         CoverPlaceholderPanel.Visibility = Visibility.Visible;
         CoverHintTextBlock.Text = hint;
+        UpdateCachedCoverBytes(null, null);
         ApplyDynamicAccent(GetDefaultOledBlueAccent());
     }
 
@@ -3105,13 +5214,13 @@ public sealed partial class MainWindow : Window
 
     private AudioBackend GetSelectedBackend()
     {
-        if (BackendComboBox.SelectedItem is ComboBoxItem { Tag: string tag } &&
+        if (BackendComboBox?.SelectedItem is ComboBoxItem { Tag: string tag } &&
             Enum.TryParse<AudioBackend>(tag, out var backend))
         {
             return backend;
         }
 
-        return AudioBackend.BassWasapi;
+        return AudioBackend.ZenithWasapi;
     }
 
     private string GetEffectivePlaybackPath(string path)
@@ -3129,33 +5238,201 @@ public sealed partial class MainWindow : Window
         return path;
     }
 
-    private async void AddLibraryFolder(string path)
+    private static string SavedLibraryFoldersPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ZenithAudio",
+        "library.folders.json");
+
+    private async Task LoadSavedLibraryFoldersAsync()
     {
-        if (_libraryFolders.Contains(path, StringComparer.OrdinalIgnoreCase))
+        List<string> savedFolders;
+        try
         {
-            StatusInfoBar.Severity = InfoBarSeverity.Informational;
-            StatusInfoBar.Message = "La carpeta de biblioteca ya está configurada";
+            if (!File.Exists(SavedLibraryFoldersPath))
+            {
+                return;
+            }
+
+            var json = await File.ReadAllTextAsync(SavedLibraryFoldersPath);
+            savedFolders = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? [];
+        }
+        catch (Exception)
+        {
             return;
         }
 
-        _libraryFolders.Add(path);
-        LibraryFoldersListView.ItemsSource = null;
-        LibraryFoldersListView.ItemsSource = _libraryFolders;
-        LibraryFoldersListView.SelectedIndex = _libraryFolders.Count - 1;
+        var validFolders = savedFolders
+            .Where(folder => !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+            .Select(NormalizeFolderPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
+        if (validFolders.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var folder in validFolders)
+        {
+            if (!_libraryFolders.Contains(folder, StringComparer.OrdinalIgnoreCase))
+            {
+                _libraryFolders.Add(folder);
+            }
+        }
+
+        RefreshLibraryFoldersListView();
         StatusInfoBar.Severity = InfoBarSeverity.Informational;
-        StatusInfoBar.Message = $"Escaneando carpeta de música: {path}";
+        StatusInfoBar.Message = $"Cargando biblioteca ({_libraryFolders.Count} carpeta(s))...";
 
-        var tracks = await ScanLibraryFolderAsync(path);
-        _libraryTracks.RemoveAll(track => track.Folder.Equals(path, StringComparison.OrdinalIgnoreCase));
-        _libraryTracks.AddRange(tracks);
+        var allTracks = new List<LibraryTrack>();
+        foreach (var folder in _libraryFolders.ToList())
+        {
+            var folderTracks = await ScanLibraryFolderAsync(folder);
+            allTracks.AddRange(folderTracks);
+        }
+
+        _libraryTracks.Clear();
+        _libraryTracks.AddRange(allTracks);
         _libraryTracks.Sort((left, right) => string.Compare(left.Title, right.Title, StringComparison.CurrentCultureIgnoreCase));
 
         ShowTrackBrowser("Explorador de biblioteca", _libraryTracks);
+        StatusInfoBar.Severity = InfoBarSeverity.Success;
+        StatusInfoBar.Message = $"Biblioteca cargada: {_libraryFolders.Count} carpeta(s) | {_libraryTracks.Count} pistas";
+    }
+
+    private void SaveLibraryFolders()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SavedLibraryFoldersPath)!);
+            var json = System.Text.Json.JsonSerializer.Serialize(_libraryFolders, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+            File.WriteAllText(SavedLibraryFoldersPath, json);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static string NormalizeFolderPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path.Trim());
+        var root = Path.GetPathRoot(fullPath);
+        return string.Equals(fullPath, root, StringComparison.OrdinalIgnoreCase)
+            ? fullPath
+            : fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+    }
+
+    private void RefreshLibraryFoldersListView(string? selectedFolder = null)
+    {
+        LibraryFoldersListView.ItemsSource = null;
+        LibraryFoldersListView.ItemsSource = _libraryFolders;
+        if (!string.IsNullOrWhiteSpace(selectedFolder))
+        {
+            LibraryFoldersListView.SelectedItem = _libraryFolders.FirstOrDefault(
+                folder => folder.Equals(selectedFolder, StringComparison.OrdinalIgnoreCase));
+        }
+        else if (_libraryFolders.Count > 0)
+        {
+            LibraryFoldersListView.SelectedIndex = _libraryFolders.Count - 1;
+        }
+    }
+
+    private async Task OpenLibraryFolderAsync(string folderPath)
+    {
+        var normalizedPath = NormalizeFolderPath(folderPath);
+        if (!Directory.Exists(normalizedPath))
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            StatusInfoBar.Message = $"La carpeta ya no existe o no es accesible: {normalizedPath}";
+            return;
+        }
+
+        LibraryFoldersListView.SelectedItem = _libraryFolders.FirstOrDefault(
+            folder => folder.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
+
+        var folderTracks = _libraryTracks
+            .Where(track => track.Folder.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (folderTracks.Count == 0)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Informational;
+            StatusInfoBar.Message = $"Escaneando carpeta de música: {normalizedPath}";
+            folderTracks = await ScanLibraryFolderAsync(normalizedPath);
+            _libraryTracks.RemoveAll(track => track.Folder.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
+            _libraryTracks.AddRange(folderTracks);
+            _libraryTracks.Sort((left, right) => string.Compare(left.Title, right.Title, StringComparison.CurrentCultureIgnoreCase));
+        }
+
+        var folderName = Path.GetFileName(normalizedPath.TrimEnd(Path.DirectorySeparatorChar));
+        ShowTrackBrowser(string.IsNullOrWhiteSpace(folderName) ? normalizedPath : folderName, folderTracks);
+
+        if (folderTracks.Count == 0)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            StatusInfoBar.Message = $"No se encontraron archivos de audio compatibles en: {normalizedPath}";
+        }
+        else
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Success;
+            StatusInfoBar.Message = $"Carpeta abierta: {normalizedPath} | {folderTracks.Count} pistas";
+        }
+    }
+
+    private async Task AddLibraryFolderAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var normalizedPath = NormalizeFolderPath(path);
+        if (!Directory.Exists(normalizedPath))
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            StatusInfoBar.Message = $"La carpeta seleccionada no existe: {normalizedPath}";
+            return;
+        }
+
+        var alreadyExists = _libraryFolders.Contains(normalizedPath, StringComparer.OrdinalIgnoreCase);
+        if (!alreadyExists)
+        {
+            _libraryFolders.Add(normalizedPath);
+            SaveLibraryFolders();
+        }
+
+        RefreshLibraryFoldersListView(normalizedPath);
+
+        StatusInfoBar.Severity = InfoBarSeverity.Informational;
+        StatusInfoBar.Message = alreadyExists
+            ? $"Actualizando carpeta de música: {normalizedPath}"
+            : $"Escaneando carpeta de música: {normalizedPath}";
+
+        var tracks = await ScanLibraryFolderAsync(normalizedPath);
+        _libraryTracks.RemoveAll(track => track.Folder.Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
+        _libraryTracks.AddRange(tracks);
+        _libraryTracks.Sort((left, right) => string.Compare(left.Title, right.Title, StringComparison.CurrentCultureIgnoreCase));
+
+        var folderName = Path.GetFileName(normalizedPath.TrimEnd(Path.DirectorySeparatorChar));
+        ShowTrackBrowser(string.IsNullOrWhiteSpace(folderName) ? normalizedPath : folderName, tracks);
+
+        if (tracks.Count == 0)
+        {
+            StatusInfoBar.Severity = InfoBarSeverity.Warning;
+            StatusInfoBar.Message = $"Carpeta configurada ({normalizedPath}), pero no se encontraron archivos de audio compatibles.";
+            return;
+        }
 
         StatusInfoBar.Severity = InfoBarSeverity.Success;
-        StatusInfoBar.Message = $"Carpeta agregada: {path} | {tracks.Count} pistas indexadas";
-
+        StatusInfoBar.Message = alreadyExists
+            ? $"Carpeta actualizada: {normalizedPath} | {tracks.Count} pistas indexadas"
+            : $"Carpeta agregada: {normalizedPath} | {tracks.Count} pistas indexadas";
     }
 
     private static Task<List<LibraryTrack>> ScanLibraryFolderAsync(string folder)
@@ -3168,9 +5445,16 @@ public sealed partial class MainWindow : Window
                 return tracks;
             }
 
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                AttributesToSkip = System.IO.FileAttributes.System | System.IO.FileAttributes.ReparsePoint
+            };
+
             try
             {
-                foreach (var filePath in Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories))
+                foreach (var filePath in Directory.EnumerateFiles(folder, "*.*", options))
                 {
                     var extension = Path.GetExtension(filePath);
                     if (!SupportedAudioExtensions.Contains(extension))
@@ -3255,16 +5539,20 @@ public sealed partial class MainWindow : Window
 
     private void ShowFolderBrowser()
     {
+        _isShowingFolderBrowser = true;
         _visibleLibraryTracks.Clear();
         LibrarySearchBox.Text = string.Empty;
         LibraryBrowserTitleTextBlock.Text = "Carpetas de música";
-        LibraryBrowserSubtitleTextBlock.Text = $"{_libraryFolders.Count} carpetas configuradas";
+        LibraryBrowserSubtitleTextBlock.Text = _libraryFolders.Count == 0
+            ? "0 carpetas configuradas · Usa 'Agregar carpeta' o 'Música'"
+            : $"{_libraryFolders.Count} carpeta(s) configurada(s) · Haz clic en una para abrirla";
         LibraryBrowserListView.ItemsSource = null;
         LibraryBrowserListView.ItemsSource = BuildFolderBrowserItems(_libraryFolders);
     }
 
     private void ShowTrackBrowser(string title, IEnumerable<LibraryTrack> tracks)
     {
+        _isShowingFolderBrowser = false;
         var visibleTracks = tracks.ToList();
         _activeLibraryTitle = title;
         _visibleLibraryTracks.Clear();
@@ -3413,12 +5701,29 @@ public sealed partial class MainWindow : Window
 
     private void ApplyLibrarySearch()
     {
+        var query = LibrarySearchBox.Text?.Trim();
+        if (_isShowingFolderBrowser)
+        {
+            var filteredFolders = string.IsNullOrWhiteSpace(query)
+                ? _libraryFolders
+                : _libraryFolders
+                    .Where(folder => folder.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                    .ToList();
+
+            LibraryBrowserTitleTextBlock.Text = "Carpetas de música";
+            LibraryBrowserSubtitleTextBlock.Text = string.IsNullOrWhiteSpace(query)
+                ? $"{filteredFolders.Count} carpeta(s) configurada(s)"
+                : $"{filteredFolders.Count} carpetas encontradas";
+            LibraryBrowserListView.ItemsSource = null;
+            LibraryBrowserListView.ItemsSource = BuildFolderBrowserItems(filteredFolders);
+            return;
+        }
+
         if (_visibleLibraryTracks.Count == 0)
         {
             return;
         }
 
-        var query = LibrarySearchBox.Text?.Trim();
         var filtered = string.IsNullOrWhiteSpace(query)
             ? _visibleLibraryTracks
             : _visibleLibraryTracks
@@ -3575,6 +5880,8 @@ public sealed partial class MainWindow : Window
         var playableTracks = queueSource
             .Where(track => WindowsFallbackExtensions.Contains(track.Extension) ||
                 track.Extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
+                track.Extension.Equals(".dff", StringComparison.OrdinalIgnoreCase) ||
+                track.Extension.Equals(".alac", StringComparison.OrdinalIgnoreCase) ||
                 track.Path.StartsWith("iso://", StringComparison.OrdinalIgnoreCase) ||
                 IsNativeBackendAvailable(GetSelectedBackend(), GetEffectivePlaybackPath(track.Path)))
             .ToList();
@@ -3619,10 +5926,21 @@ public sealed partial class MainWindow : Window
 
     private void StopCurrentPlaybackForTrackChange()
     {
-        if (_usingFallbackPlayer)
+        if (_usingAsioEngine)
+        {
+            _asioEngine.Stop();
+            _usingAsioEngine = false;
+        }
+        else if (_usingWasapiEngine)
+        {
+            _wasapiEngine.Stop();
+            _usingWasapiEngine = false;
+        }
+        else if (_usingFallbackPlayer)
         {
             _fallbackMediaPlayer.Pause();
             _fallbackMediaPlayer.Source = null;
+            _usingFallbackPlayer = false;
         }
         else
         {
@@ -3644,7 +5962,20 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ShuffleButton.Opacity = _shuffleEnabled ? 1.0 : 0.45;
+        ShuffleButton.Opacity = _shuffleEnabled ? 1.0 : 0.72;
+        ShuffleButton.Background = new SolidColorBrush(_shuffleEnabled
+            ? Microsoft.UI.ColorHelper.FromArgb(255, 7, 39, 62)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 6, 18, 31));
+        ShuffleButton.BorderBrush = new SolidColorBrush(_shuffleEnabled
+            ? Microsoft.UI.ColorHelper.FromArgb(255, 43, 163, 234)
+            : Microsoft.UI.ColorHelper.FromArgb(255, 20, 54, 82));
+
+        if (ShuffleIconPath is not null)
+        {
+            ShuffleIconPath.Stroke = new SolidColorBrush(_shuffleEnabled
+                ? Microsoft.UI.ColorHelper.FromArgb(255, 114, 208, 255)
+                : Microsoft.UI.ColorHelper.FromArgb(255, 102, 138, 164));
+        }
     }
 
     private async Task PlayWithWindowsFallbackAsync(string filePath)
@@ -3666,7 +5997,13 @@ public sealed partial class MainWindow : Window
             TransportBadgeTextBlock.Text = "DSD -> PCM";
             _vuUsesLiveLevel = true;
             _vuUsesAnalyzer = false;
-            playbackSource = DsfPcmStreamSource.CreateMediaSource(filePath, _toneSettings, level => _vuTargetLevel = MapLiveVuLevel(level));
+            var dsdOptions = GetCurrentDsdPlaybackOptions();
+            playbackSource = DsfPcmStreamSource.CreateMediaSource(
+                filePath,
+                _toneSettings,
+                level => _vuTargetLevel = MapLiveVuLevel(level),
+                dsdOptions.TargetPcmSampleRate > 0 ? dsdOptions.TargetPcmSampleRate : 88200,
+                dsdOptions.GainDb);
         }
         else if (Path.GetExtension(filePath).Equals(".wav", StringComparison.OrdinalIgnoreCase))
         {
@@ -3773,13 +6110,29 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        _remoteServer?.Dispose();
         CleanupAllTemporaryFallbackFiles();
+        _asioEngine.Dispose();
+        _wasapiEngine.Dispose();
         _audioEngine.Dispose();
         _audioLevelAnalyzer.Dispose();
     }
 
     private static bool IsNativeBackendAvailable(AudioBackend backend, string filePath)
     {
+        if (backend == AudioBackend.AsioNative)
+        {
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            return AsioPlaybackEngine.GetAvailableDrivers().Count > 0 &&
+                (ext is ".dsf" or ".dff" or ".alac" || WindowsFallbackExtensions.Contains(ext));
+        }
+
+        if (backend == AudioBackend.ZenithWasapi)
+        {
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            return ext is ".dsf" or ".dff" or ".alac" || WindowsFallbackExtensions.Contains(ext);
+        }
+
         if (backend == AudioBackend.MpvWasapi)
         {
             return IsDllAvailable("mpv-2.dll");
@@ -3866,16 +6219,12 @@ public sealed partial class MainWindow : Window
         var selectedDevice = GetSelectedOutputDevice();
         if (selectedDevice is null || selectedDevice.IsSystemDefault)
         {
-            if (ExclusiveModeToggle.IsOn)
-            {
-                ExclusiveModeToggle.IsOn = false;
-            }
-
-            PreferredFormatComboBox.SelectedIndex = 2;
-            OutputPathTextBlock.Text = "Windows predeterminado";
-            ModeTextBlock.Text = "Windows max";
-            StatusInfoBar.Severity = InfoBarSeverity.Warning;
-            StatusInfoBar.Message = "Usando el dispositivo predeterminado de Windows. Para modo exclusivo elige un endpoint especifico como Realtek, USB o DAC.";
+            OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "WASAPI Excl. (predet.)" : "WASAPI Compartido";
+            ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-Perfect" : "WASAPI Comp.";
+            StatusInfoBar.Severity = InfoBarSeverity.Informational;
+            StatusInfoBar.Message = ExclusiveModeToggle.IsOn
+                ? "Salida predeterminada en WASAPI Exclusivo. Puedes elegir un DAC o audífono específico en el selector superior."
+                : "Salida predeterminada en WASAPI Compartido.";
             return;
         }
 
@@ -3884,19 +6233,19 @@ public sealed partial class MainWindow : Window
         OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn
             ? $"{selectedDevice.KindLabel} exclusivo"
             : $"{selectedDevice.KindLabel} compartido";
-        ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-perfect" : "Windows max";
+        ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-Perfect" : "WASAPI Comp.";
         StatusInfoBar.Severity = selectedDevice.IsLikelyDac || selectedDevice.IsUsb ? InfoBarSeverity.Success : InfoBarSeverity.Informational;
         if (selectedDevice.IsKnownZishanZ2)
         {
             StatusInfoBar.Message = ExclusiveModeToggle.IsOn
-                ? "ZiShan Z2 detectado como DAC USB. Zenith usara WASAPI exclusivo; si Windows solo expone 16-bit/48 kHz, DSD nativo por USB no estara disponible y conviene usar DSD->PCM o reproducir DSD desde microSD."
-                : "ZiShan Z2 detectado como DAC USB. En modo compartido Windows puede limitarlo a 16-bit/48 kHz.";
+                ? "ZiShan Z2 detectado como DAC USB. Zenith usará WASAPI exclusivo (DoP si lo soporta, o DSD->PCM FIR)."
+                : "ZiShan Z2 detectado como DAC USB en modo compartido.";
             return;
         }
 
         StatusInfoBar.Message = ExclusiveModeToggle.IsOn
-            ? $"Salida seleccionada: {selectedDevice.Name}. Zenith intentará WASAPI exclusivo si el backend nativo está disponible."
-            : $"Salida seleccionada: {selectedDevice.Name}. Windows negociara la mejor calidad compatible.";
+            ? $"Salida seleccionada: {selectedDevice.Name} (WASAPI Exclusivo)."
+            : $"Salida seleccionada: {selectedDevice.Name} (WASAPI Compartido).";
     }
 
     private bool IsExclusiveDacSelected()
@@ -4043,93 +6392,233 @@ public sealed partial class MainWindow : Window
         var effectivePath = hasTrack ? GetEffectivePlaybackPath(_currentFilePath!) : string.Empty;
         var extension = hasTrack ? Path.GetExtension(effectivePath) : string.Empty;
         var isDsd = DsdExtensions.Contains(extension);
+        var dsdOptions = GetCurrentDsdPlaybackOptions();
         var nativeAvailable = hasTrack && IsNativeBackendAvailable(backend, effectivePath);
 
-        BackendTextBlock.Text = backend == AudioBackend.BassWasapi ? "BASS" : "MPV";
+        BackendTextBlock.Text = GetBackendShortLabel(backend);
 
         if (!hasTrack)
         {
             PlayButton.IsEnabled = false;
-            ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-perfect" : "Compartido";
-            OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "DAC exclusivo" : "Windows compartido";
-            return;
-        }
-
-        if (nativeAvailable)
-        {
-            PlayButton.IsEnabled = true;
-
-            if (backend == AudioBackend.MpvWasapi && !IsExclusiveDacSelected())
+            if (backend == AudioBackend.AsioNative)
             {
-                PreferredFormatComboBox.SelectedIndex = 2;
-                ExclusiveModeToggle.IsOn = false;
-                ModeTextBlock.Text = "Windows max";
-                OutputPathTextBlock.Text = "MPV compartido max";
-                StatusInfoBar.Severity = InfoBarSeverity.Warning;
-                StatusInfoBar.Message = "MPV está disponible, pero no hay DAC exclusivo seleccionado. Se usará salida compartida con la mejor calidad negociada por Windows.";
+                var driverName = GetSelectedAsioDriver()?.Name ?? "Sin driver ASIO";
+                ModeTextBlock.Text = "ASIO DSD Nativo";
+                OutputPathTextBlock.Text = driverName;
                 return;
             }
 
-            ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-perfect" : "Compartido";
-            OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "DAC exclusivo" : "Windows compartido";
-            StatusInfoBar.Severity = InfoBarSeverity.Success;
-            StatusInfoBar.Message = "Pista lista para reproducir";
+            ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-Perfect" : "WASAPI Comp.";
+            OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "WASAPI Exclusivo" : "WASAPI Compartido";
             return;
         }
 
-        if (isDsd)
+        if (backend == AudioBackend.AsioNative)
         {
-            var canConvertDsd = extension.Equals(".dsf", StringComparison.OrdinalIgnoreCase) ||
-                extension.Equals(".dff", StringComparison.OrdinalIgnoreCase);
-            PlayButton.IsEnabled = canConvertDsd;
-            PreferredFormatComboBox.SelectedIndex = 2;
-            ExclusiveModeToggle.IsOn = false;
-            ModeTextBlock.Text = canConvertDsd ? "DSD a PCM" : "DSD nativo";
-            OutputPathTextBlock.Text = canConvertDsd ? $"PCM {GetSelectedOutputLabel()}" : "DLL nativas faltantes";
-            StatusInfoBar.Severity = InfoBarSeverity.Warning;
-            if (canConvertDsd)
+            var driver = GetSelectedAsioDriver();
+            var isIso = extension.Equals(".iso", StringComparison.OrdinalIgnoreCase);
+            var canPlayAsio = driver is not null && !isIso && (extension is ".dsf" or ".dff" or ".alac" || WindowsFallbackExtensions.Contains(extension));
+            PlayButton.IsEnabled = canPlayAsio;
+            ModeTextBlock.Text = isDsd ? "ASIO DSD Nativo" : "ASIO Bit-Perfect";
+            OutputPathTextBlock.Text = driver?.Name ?? "Sin driver ASIO";
+            StatusInfoBar.Severity = canPlayAsio ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+            StatusInfoBar.Message = driver is null
+                ? "No se detectó un controlador ASIO en Windows. Instala el driver ASIO de tu DAC (ej. FiiO ASIO Driver)."
+                : isIso
+                    ? "Abre el SACD ISO desde la biblioteca para extraer las pistas DSF sin pérdida."
+                    : isDsd
+                        ? $"DSD listo para salida ASIO Nativa (1-bit) en {driver.Name}."
+                        : $"Pista lista para reproducción ASIO PCM bit-perfect en {driver.Name}.";
+            return;
+        }
+
+        if (backend == AudioBackend.ZenithWasapi || !nativeAvailable)
+        {
+            var canPlayIntegrated = CanUseIntegratedWasapi(effectivePath, dsdOptions);
+            if (isDsd)
             {
-                StatusInfoBar.Message = GetDsdPcmFallbackMessage();
+                var isIso = extension.Equals(".iso", StringComparison.OrdinalIgnoreCase);
+                PlayButton.IsEnabled = !isIso && canPlayIntegrated;
+                ModeTextBlock.Text = dsdOptions.OutputMode == DsdOutputMode.DoPExclusive && ExclusiveModeToggle.IsOn
+                    ? "DoP / DSD FIR"
+                    : "DSD -> PCM FIR";
+                OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn
+                    ? $"WASAPI Excl. {GetSelectedOutputLabel()}"
+                    : $"WASAPI Comp. {GetSelectedOutputLabel()}";
+                StatusInfoBar.Severity = PlayButton.IsEnabled ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+                StatusInfoBar.Message = isIso
+                    ? "Abre el SACD ISO desde la biblioteca para extraer las pistas DSF sin pérdida."
+                    : PlayButton.IsEnabled
+                        ? $"DSD listo en Zenith WASAPI ({(dsdOptions.OutputMode == DsdOutputMode.DoPExclusive && ExclusiveModeToggle.IsOn ? "DoP exclusivo / respaldo PCM FIR" : "PCM FIR fase lineal")})."
+                        : "Modo 'Solo DSD nativo (BASS / MPV)' activo y faltan DLL externas. Cambia a DSD a PCM FIR.";
                 return;
             }
-            StatusInfoBar.Message = canConvertDsd
-                ? "No hay DAC/librerías nativas. Zenith convertirá DSF a PCM 88.2 kHz y reproducirá por Windows/Realtek."
-                : GetNativeDsdMissingMessage(backend);
+
+            PlayButton.IsEnabled = canPlayIntegrated || WindowsFallbackExtensions.Contains(extension);
+            ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-Perfect" : "WASAPI Comp.";
+            OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn
+                ? $"WASAPI Excl. {GetSelectedOutputLabel()}"
+                : $"WASAPI Comp. {GetSelectedOutputLabel()}";
+            StatusInfoBar.Severity = PlayButton.IsEnabled ? InfoBarSeverity.Success : InfoBarSeverity.Warning;
+            StatusInfoBar.Message = PlayButton.IsEnabled
+                ? $"Pista lista en Zenith WASAPI ({(ExclusiveModeToggle.IsOn ? "Modo Exclusivo" : "Modo Compartido")})."
+                : "Este formato requiere las librerías opcionales de BASS o MPV.";
             return;
         }
 
-        PlayButton.IsEnabled = WindowsFallbackExtensions.Contains(extension);
-        PreferredFormatComboBox.SelectedIndex = 2;
-        ExclusiveModeToggle.IsOn = false;
-        ModeTextBlock.Text = "Windows max";
-        OutputPathTextBlock.Text = "Fallback de Windows";
-        StatusInfoBar.Severity = InfoBarSeverity.Warning;
-        StatusInfoBar.Message = backend == AudioBackend.MpvWasapi && !IsDllAvailable("mpv-2.dll")
-            ? "MPV no está instalado. Se usará Windows fallback con la mayor calidad que el sistema pueda negociar."
-            : "BASS no está instalado. Se usará Windows fallback con la mayor calidad que el sistema pueda negociar.";
+        PlayButton.IsEnabled = true;
+
+        if (backend == AudioBackend.MpvWasapi && !IsExclusiveDacSelected())
+        {
+            ModeTextBlock.Text = "MPV Comp.";
+            OutputPathTextBlock.Text = "MPV compartido";
+            StatusInfoBar.Severity = InfoBarSeverity.Informational;
+            StatusInfoBar.Message = "MPV disponible en salida compartida.";
+            return;
+        }
+
+        ModeTextBlock.Text = ExclusiveModeToggle.IsOn ? "Bit-Perfect" : "Compartido";
+        OutputPathTextBlock.Text = ExclusiveModeToggle.IsOn ? "DAC exclusivo" : "Windows compartido";
+        StatusInfoBar.Severity = InfoBarSeverity.Success;
+        StatusInfoBar.Message = "Pista lista para reproducir";
     }
 
     private void RefreshBackendLabels()
     {
-        if (BackendComboBox is null || BackendComboBox.Items.Count < 2)
+        if (BackendComboBox is null || BackendComboBox.Items.Count < 4)
         {
             return;
         }
 
-        if (BackendComboBox.Items[0] is ComboBoxItem bassItem)
+        if (BackendComboBox.Items[0] is ComboBoxItem zenithItem)
+        {
+            zenithItem.Content = "Zenith WASAPI";
+        }
+
+        if (BackendComboBox.Items[1] is ComboBoxItem asioItem)
+        {
+            asioItem.Content = _asioDrivers.Count > 0
+                ? "ASIO (DSD Nativo)"
+                : "ASIO (sin drivers)";
+        }
+
+        if (BackendComboBox.Items[2] is ComboBoxItem bassItem)
         {
             bassItem.Content = IsDllAvailable("bass.dll") && IsDllAvailable("basswasapi.dll")
                 ? "BASS WASAPI"
                 : "BASS WASAPI (opcional)";
         }
 
-        if (BackendComboBox.Items[1] is ComboBoxItem mpvItem)
+        if (BackendComboBox.Items[3] is ComboBoxItem mpvItem)
         {
             mpvItem.Content = IsDllAvailable("mpv-2.dll")
                 ? "MPV WASAPI"
                 : "MPV WASAPI (opcional)";
         }
     }
+
+    private static string SavedAudioSettingsPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ZenithAudio",
+        "audio.settings.json");
+
+    private void LoadSavedAudioSettings()
+    {
+        _isLoadingAudioSettings = true;
+        try
+        {
+            if (!File.Exists(SavedAudioSettingsPath))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(SavedAudioSettingsPath);
+            var settings = System.Text.Json.JsonSerializer.Deserialize<SavedAudioSettings>(json);
+            if (settings is null)
+            {
+                return;
+            }
+
+            _savedAudioSettings = settings;
+
+            if (BackendComboBox is not null && settings.BackendIndex >= 0 && settings.BackendIndex < BackendComboBox.Items.Count)
+            {
+                BackendComboBox.SelectedIndex = settings.BackendIndex;
+            }
+
+            if (ExclusiveModeToggle is not null)
+            {
+                SetExclusiveToggleSilently(false);
+            }
+
+            if (DsdModeComboBox is not null && settings.DsdModeIndex >= 0 && settings.DsdModeIndex < DsdModeComboBox.Items.Count)
+            {
+                DsdModeComboBox.SelectedIndex = settings.DsdModeIndex;
+            }
+
+            if (DsdPcmRateComboBox is not null && settings.DsdPcmRateIndex >= 0 && settings.DsdPcmRateIndex < DsdPcmRateComboBox.Items.Count)
+            {
+                DsdPcmRateComboBox.SelectedIndex = settings.DsdPcmRateIndex;
+            }
+
+            if (DsdGainComboBox is not null && settings.DsdGainIndex >= 0 && settings.DsdGainIndex < DsdGainComboBox.Items.Count)
+            {
+                DsdGainComboBox.SelectedIndex = settings.DsdGainIndex;
+            }
+
+            if (BufferSlider is not null && settings.BufferMilliseconds is >= 50 and <= 500)
+            {
+                BufferSlider.Value = settings.BufferMilliseconds;
+            }
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _isLoadingAudioSettings = false;
+        }
+    }
+
+    private void SaveAudioSettings()
+    {
+        if (_isLoadingAudioSettings)
+        {
+            return;
+        }
+
+        try
+        {
+            var settings = new SavedAudioSettings(
+                GetSelectedOutputDevice()?.Id,
+                BackendComboBox?.SelectedIndex ?? 0,
+                ExclusiveModeToggle?.IsOn ?? false,
+                DsdModeComboBox?.SelectedIndex ?? 0,
+                DsdPcmRateComboBox?.SelectedIndex ?? 0,
+                DsdGainComboBox?.SelectedIndex ?? 2,
+                (int)(BufferSlider?.Value ?? 100),
+                GetSelectedAsioDriver()?.Name);
+
+            _savedAudioSettings = settings;
+            Directory.CreateDirectory(Path.GetDirectoryName(SavedAudioSettingsPath)!);
+            File.WriteAllText(
+                SavedAudioSettingsPath,
+                System.Text.Json.JsonSerializer.Serialize(settings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch
+        {
+        }
+    }
+
+    private sealed record SavedAudioSettings(
+        string? DeviceId,
+        int BackendIndex,
+        bool ExclusiveMode,
+        int DsdModeIndex,
+        int DsdPcmRateIndex,
+        int DsdGainIndex,
+        int BufferMilliseconds,
+        string? AsioDriverName = null);
 
     private bool ShouldConvertDsdToPcm()
     {
@@ -4244,12 +6733,43 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    private string BuildZenithAiAudioContext()
+    private string BuildZenithAiAudioContext(string? userQuestion = null)
     {
         var selectedOutput = GetSelectedOutputDevice()?.ToString() ?? "Salida predeterminada de Windows";
         var currentTrack = string.IsNullOrWhiteSpace(_currentFilePath)
             ? "Sin pista cargada"
             : $"{TrackTitleTextBlock.Text} ({_currentFilePath})";
+        var availableOutputs = string.Join(", ", _outputDevices.Select(d => d.Name).Take(8));
+        var availableAsio = _asioDrivers.Count > 0 ? string.Join(", ", _asioDrivers.Select(d => d.Name)) : "ninguno";
+
+        var libraryMatches = string.Empty;
+        if (_libraryTracks.Count > 0)
+        {
+            var tokens = string.IsNullOrWhiteSpace(userQuestion)
+                ? Array.Empty<string>()
+                : NormalizeCommandText(userQuestion)
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(t => t.Length >= 3)
+                    .ToArray();
+
+            var matched = tokens.Length > 0
+                ? _libraryTracks
+                    .Where(t => tokens.Any(tok =>
+                        NormalizeCommandText(t.Title).Contains(tok, StringComparison.Ordinal) ||
+                        NormalizeCommandText(Path.GetFileName(Path.GetDirectoryName(t.Path) ?? t.Folder)).Contains(tok, StringComparison.Ordinal) ||
+                        t.Format.Contains(tok, StringComparison.OrdinalIgnoreCase)))
+                    .Take(15)
+                    .Select(t => $"{t.Title} [{t.Format}]")
+                    .ToList()
+                : [];
+
+            if (matched.Count == 0)
+            {
+                matched = _libraryTracks.Take(10).Select(t => $"{t.Title} [{t.Format}]").ToList();
+            }
+
+            libraryMatches = $" Biblioteca cargada: {_libraryTracks.Count} pistas (muestra relevante: {string.Join("; ", matched)}).";
+        }
 
         return
             $"Pista actual: {currentTrack}. " +
@@ -4261,9 +6781,14 @@ public sealed partial class MainWindow : Window
             $"Backend seleccionado: {BackendTextBlock.Text}. " +
             $"Modo: {ModeTextBlock.Text}. " +
             $"Ruta de salida: {OutputPathTextBlock.Text}. " +
-            $"Dispositivo: {selectedOutput}. " +
+            $"Dispositivo actual: {selectedOutput}. " +
+            $"Salidas disponibles: {availableOutputs}. " +
+            $"Drivers ASIO instalados: {availableAsio}. " +
+            $"Volumen: {(int)(VolumeSlider?.Value ?? 100)}%. " +
+            $"Aleatorio: {(_shuffleEnabled ? "ON" : "OFF")}. " +
             $"Cadena de señal: fuente {SignalSourceTextBlock.Text}, decodificación {SignalDecodeTextBlock.Text}, DSP {SignalDspTextBlock.Text}, salida {SignalOutputTextBlock.Text}. " +
-            $"Control de tono: {ToneSummaryTextBlock.Text}.";
+            $"Control de tono: {ToneSummaryTextBlock.Text}." +
+            libraryMatches;
     }
 
     private static string FormatTime(TimeSpan value)
@@ -4326,19 +6851,80 @@ public sealed partial class MainWindow : Window
             var isUsb = isKnownZishanZ2 ||
                 normalizedName.Contains("usb", StringComparison.Ordinal) ||
                 normalizedId.Contains("usb", StringComparison.Ordinal);
+            var isOnboardOrGeneric =
+                normalizedName.Contains("realtek", StringComparison.Ordinal) ||
+                normalizedName.Contains("high definition audio", StringComparison.Ordinal) ||
+                normalizedName.Contains("conexant", StringComparison.Ordinal) ||
+                normalizedName.Contains("idt", StringComparison.Ordinal) ||
+                normalizedName.Contains("intel", StringComparison.Ordinal) ||
+                normalizedName.Contains("nvidia", StringComparison.Ordinal) ||
+                normalizedName.Contains("amd high definition", StringComparison.Ordinal) ||
+                normalizedName.Contains("bluetooth", StringComparison.Ordinal) ||
+                normalizedName.Contains("hands-free", StringComparison.Ordinal) ||
+                normalizedName.Contains("gaming headset", StringComparison.Ordinal) ||
+                normalizedName.Contains("redragon", StringComparison.Ordinal) ||
+                normalizedName.Contains("hyperx", StringComparison.Ordinal) ||
+                normalizedName.Contains("logitech", StringComparison.Ordinal) ||
+                normalizedName.Contains("razer", StringComparison.Ordinal) ||
+                normalizedName.Contains("corsair", StringComparison.Ordinal) ||
+                normalizedName.Contains("steelseries", StringComparison.Ordinal);
+
+            var driverInfo = WasapiPlaybackEngine.InspectEndpointDriver(device.Id, name);
             var isLikelyDac =
-                isKnownZishanZ2 ||
-                normalizedName.Contains("dac", StringComparison.Ordinal) ||
-                normalizedName.Contains("asio", StringComparison.Ordinal) ||
-                normalizedName.Contains("hifi", StringComparison.Ordinal) ||
-                normalizedName.Contains("hi-fi", StringComparison.Ordinal) ||
-                normalizedName.Contains("ifi", StringComparison.Ordinal) ||
-                normalizedName.Contains("topping", StringComparison.Ordinal) ||
-                normalizedName.Contains("fiio", StringComparison.Ordinal) ||
-                normalizedName.Contains("smsl", StringComparison.Ordinal) ||
-                normalizedName.Contains("focusrite", StringComparison.Ordinal) ||
-                normalizedName.Contains("motu", StringComparison.Ordinal) ||
-                normalizedName.Contains("scarlett", StringComparison.Ordinal);
+                !isOnboardOrGeneric && (
+                    driverInfo.HasDedicatedDacDriver ||
+                    isKnownZishanZ2 ||
+                    normalizedName.Contains("fiio", StringComparison.Ordinal) ||
+                    normalizedName.Contains("jadeaudio", StringComparison.Ordinal) ||
+                    normalizedName.Contains("jade audio", StringComparison.Ordinal) ||
+                    normalizedName.Contains("ja11", StringComparison.Ordinal) ||
+                    normalizedName.Contains("ka11", StringComparison.Ordinal) ||
+                    normalizedName.Contains("ka13", StringComparison.Ordinal) ||
+                    normalizedName.Contains("ka15", StringComparison.Ordinal) ||
+                    normalizedName.Contains("ka17", StringComparison.Ordinal) ||
+                    normalizedName.Contains("dac", StringComparison.Ordinal) ||
+                    normalizedName.Contains("asio", StringComparison.Ordinal) ||
+                    normalizedName.Contains("hifi", StringComparison.Ordinal) ||
+                    normalizedName.Contains("hi-fi", StringComparison.Ordinal) ||
+                    normalizedName.Contains("ifi", StringComparison.Ordinal) ||
+                    normalizedName.Contains("topping", StringComparison.Ordinal) ||
+                    normalizedName.Contains("smsl", StringComparison.Ordinal) ||
+                    normalizedName.Contains("s.m.s.l", StringComparison.Ordinal) ||
+                    normalizedName.Contains("schiit", StringComparison.Ordinal) ||
+                    normalizedName.Contains("chord", StringComparison.Ordinal) ||
+                    normalizedName.Contains("focusrite", StringComparison.Ordinal) ||
+                    normalizedName.Contains("scarlett", StringComparison.Ordinal) ||
+                    normalizedName.Contains("motu", StringComparison.Ordinal) ||
+                    normalizedName.Contains("audient", StringComparison.Ordinal) ||
+                    normalizedName.Contains("rme", StringComparison.Ordinal) ||
+                    normalizedName.Contains("steinberg", StringComparison.Ordinal) ||
+                    normalizedName.Contains("dragonfly", StringComparison.Ordinal) ||
+                    normalizedName.Contains("audioquest", StringComparison.Ordinal) ||
+                    normalizedName.Contains("shanling", StringComparison.Ordinal) ||
+                    normalizedName.Contains("hiby", StringComparison.Ordinal) ||
+                    normalizedName.Contains("cayin", StringComparison.Ordinal) ||
+                    normalizedName.Contains("questyle", StringComparison.Ordinal) ||
+                    normalizedName.Contains("moondrop", StringComparison.Ordinal) ||
+                    normalizedName.Contains("tempotec", StringComparison.Ordinal) ||
+                    normalizedName.Contains("qudelix", StringComparison.Ordinal) ||
+                    normalizedName.Contains("sabaj", StringComparison.Ordinal) ||
+                    normalizedName.Contains("loxjie", StringComparison.Ordinal) ||
+                    normalizedName.Contains("gustard", StringComparison.Ordinal) ||
+                    normalizedName.Contains("denafrips", StringComparison.Ordinal) ||
+                    normalizedName.Contains("aune", StringComparison.Ordinal) ||
+                    normalizedName.Contains("xduoo", StringComparison.Ordinal) ||
+                    normalizedName.Contains("jcally", StringComparison.Ordinal) ||
+                    normalizedName.Contains("hidizs", StringComparison.Ordinal) ||
+                    normalizedName.Contains("ibasso", StringComparison.Ordinal) ||
+                    normalizedName.Contains("xmos", StringComparison.Ordinal) ||
+                    normalizedName.Contains("savitech", StringComparison.Ordinal) ||
+                    normalizedName.Contains("bravo-hd", StringComparison.Ordinal) ||
+                    normalizedName.Contains("usb audio 2.0", StringComparison.Ordinal) ||
+                    normalizedName.Contains("usb audio device", StringComparison.Ordinal) ||
+                    normalizedId.Contains("fiio", StringComparison.Ordinal) ||
+                    normalizedId.Contains("tusbaudio", StringComparison.Ordinal) ||
+                    normalizedId.Contains("vid_2972", StringComparison.Ordinal) ||
+                    normalizedId.Contains("xmos", StringComparison.Ordinal));
 
             return new OutputDeviceOption(name, device.Id, device, false, isUsb, isLikelyDac);
         }

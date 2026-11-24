@@ -1,14 +1,14 @@
 # Manual de Usuario de Zenith Audio Player
 
-Versión del manual: 1.0.6  
+Versión del manual: 1.0.8  
 Aplicación: Zenith Audio Player  
 Sistema objetivo: Windows 10/11 64 bits
 
 ## 1. Qué es Zenith Audio
 
-Zenith Audio Player es un reproductor de música para Windows orientado a bibliotecas locales de alta resolución. Está diseñado para reproducir FLAC, WAV, AIFF, APE, WavPack, Opus, MP3, AAC/M4A, DSF/DFF, hojas CUE y flujos SACD ISO, con una interfaz moderna, control de dispositivos de salida, visualización tipo VU meter, letras, carátulas y el asistente ZenithAI.
+Zenith Audio Player es un reproductor de música audiófilo para Windows orientado a bibliotecas locales de alta resolución. Está diseñado para reproducir FLAC, WAV, AIFF, APE, WavPack, Opus, MP3, AAC/M4A, DSF/DFF, hojas CUE y flujos SACD ISO, con una interfaz OLED responsiva, selección de dispositivos de salida y motor estilo foobar2000 (**WASAPI** y **ASIO Nativo DSD64/DSD128**), medidor VU, ecualizador biquad, letras sincronizadas, carátulas, el asistente integrado **ZenithAI** multi-proveedor y **Control Remoto Web por red local (Wi-Fi / LAN)**.
 
-La versión 1.0.6 agrega un fallback WAV PCM propio con NAudio para casos donde Windows avanza la pista pero no entrega audio, fallback DSF/DFF sin compresión DST a PCM en RAM cuando no hay DAC DSD ni backend nativo, y soporte de biblioteca para APE, WavPack, Opus y hojas CUE.
+La versión 1.0.8 incorpora motor ASIO nativo para DSD64/DSD128 (compatible con DACs USB como FiiO / JadeAudio JA11), decodificador DSD FIR de fase lineal Blackman-Harris, protección inteligente de Modo Exclusivo contra ruido blanco en salidas sin DAC dedicado, escaneo tolerante para bibliotecas de 60 GB+, interfaz OLED rediseñada con iconos vectoriales responsivos, integración directa de ZenithAI con el reproductor + extracción universal de modelos, y un servidor de Control Remoto Web con Tailwind CSS.
 
 El objetivo principal es ofrecer una experiencia de escucha clara, técnica y fácil de usar, especialmente para usuarios que tienen bibliotecas grandes, archivos DSD o equipos de audio dedicados.
 
@@ -37,32 +37,30 @@ El instalador oficial incluye .NET Desktop Runtime 8 y Windows App Runtime 1.8, 
 ## 3. Instalación
 
 1. Descarga el instalador desde la sección Releases del repositorio de GitHub.
-2. Ejecuta `ZenithAudio_v1.0.6_Setup_win-x64_wavfix.exe` o una versión superior.
+2. Ejecuta `ZenithAudio_v1.0.8_Setup_win-x64.exe` o una versión superior.
 3. Acepta los permisos de administrador si Windows los solicita.
-4. Espera a que el instalador agregue los componentes necesarios.
+4. Espera a que el instalador agregue los componentes necesarios (`.NET Desktop Runtime 8` y `Windows App Runtime 1.8`).
 5. Abre Zenith Audio desde el acceso directo del escritorio o desde el menú Inicio.
 
 Si Windows SmartScreen muestra una advertencia, se debe a que la firma actual es local/autofirmada. La app no incluye telemetría ni instaladores ocultos, pero Windows puede advertir mientras no exista un certificado comercial OV/EV.
 
 ## 4. Primer inicio
 
-Al abrir Zenith Audio verás estas zonas principales:
+Al abrir Zenith Audio verás estas zonas principales (con diseño responsivo que se adapta automáticamente a pantalla completa, pantalla dividida o ventana compacta):
 
-- Biblioteca: accesos a carpetas de música, álbumes DSD, Hi-Res PCM y ajustes.
-- Explorador de biblioteca: lista de canciones detectadas.
-- Reproduciendo ahora: pista actual, carátula, VU meter y letras.
-- Control de tono: EQ, preamplificación, subgraves, presencia y aire.
-- Ajustes del sistema: salida de audio, formato preferido, modo DSD y opciones avanzadas.
-- Barra inferior: controles de reproducción, progreso, volumen y estado de ruta de audio.
+- Barra superior: selector rápido de salida de audio, motor (`Zenith WASAPI`, `ASIO DSD Nativo`, `BASS`, `MPV`), interruptor de Modo Exclusivo, botones `Abrir`, `ZenithAI` y `Remoto`.
+- Biblioteca y Explorador (izquierda): accesos rápidos (`Carpetas`, `DSD`, `Hi-Res PCM`, `Ajustes`), botones `+ Carpeta` / `Música Win`, buscador y lista de canciones.
+- Escenario central: pista actual, carátula, Medidor VU Zenith, laboratorio Anti-Fake y letras sincronizadas.
+- Panel derecho con 3 pestañas: `Señal` (cadena técnica y flujo de bits), `Tono / EQ` (ecualizador biquad y AutoEQ) y `Ajustes` (salida, driver ASIO, opciones DSD y buffer).
+- Barra inferior: controles vectoriales de reproducción, línea de tiempo, volumen y ruta de audio activa.
 
 ## 5. Agregar música
 
-1. En el panel izquierdo, abre Biblioteca.
-2. Entra en Carpetas de música.
-3. Agrega una carpeta donde tengas archivos de audio.
-4. Zenith Audio escaneará la carpeta y mostrará las pistas detectadas.
+1. En el Explorador de biblioteca (panel izquierdo), pulsa **`+ Carpeta`** para seleccionar cualquier carpeta de música o **`Música Win`** para cargar directamente tu carpeta Música de Windows.
+2. También puedes pulsar **Carpetas** en el menú superior izquierdo para administrar tus carpetas guardadas.
+3. Zenith Audio escaneará recursivamente la carpeta (tolerando subcarpetas del sistema o sin permisos) y recordará tus carpetas automáticamente al volver a abrir la app.
 
-Para bibliotecas grandes, es recomendable usar un SSD y evitar escanear discos externos lentos mientras se copian archivos.
+Para bibliotecas grandes (60 GB+), es recomendable usar un SSD y evitar escanear discos externos lentos mientras se copian archivos.
 
 ## 6. Buscar y reproducir canciones
 
@@ -84,8 +82,8 @@ Para bibliotecas grandes, es recomendable usar un SSD y evitar escanear discos e
 | MP3 | `.mp3` | Soportado |
 | AAC / MP4 Audio | `.aac`, `.m4a` | Soportado según codecs disponibles |
 | Ogg Opus | `.opus`, `.ogg` | Soportado según Windows Media Foundation o BASS con `bassopus.dll` |
-| DSD DSF | `.dsf` | Soportado con conversión DSD a PCM si no hay DAC DSD |
-| DSD DFF | `.dff` | Soportado con MPV o BASS + `bassdsd.dll`; fallback PCM para DFF/DSDIFF sin compresión DST |
+| DSD DSF | `.dsf` | Soportado: ASIO DSD64/DSD128 nativo, DoP Exclusivo o decodificación FIR Blackman-Harris a PCM |
+| DSD DFF | `.dff` | Soportado: ASIO DSD nativo, DoP o decodificación FIR a PCM para DFF/DSDIFF sin compresión DST |
 | SACD ISO | `.iso` | Soportado mediante extracción a DSF con `sacd_extract.exe` |
 | Hojas CUE | `.cue` | Soportado como índice virtual de pistas cuando referencia audio local |
 | MQA | `.mqa`, `.flac` con MQA | Reproducible como PCM; decodificación completa depende del DAC/backend |
@@ -93,31 +91,24 @@ Para bibliotecas grandes, es recomendable usar un SSD y evitar escanear discos e
 | Letras simples | `.txt` | Soportado |
 | Carátulas | `.jpg`, `.jpeg`, `.png`, metadata embebida | Soportado |
 
-## 8. Salida de audio
+## 8. Salida de audio, WASAPI y ASIO Nativo
 
-En Ajustes del sistema puedes seleccionar el dispositivo de salida.
+Desde la barra superior o en la pestaña derecha **Ajustes** puedes elegir salida y motor con cambio en caliente:
 
-- Windows predeterminado: usa la salida activa del sistema.
-- Realtek / altavoces integrados: recomendado para equipos sin DAC externo.
-- USB DAC / interfaz de audio: recomendado para escucha dedicada.
-- WASAPI exclusivo: intenta entregar audio directamente al dispositivo, evitando mezclas del sistema.
+- **Windows predeterminado / Realtek / Headsets:** ideal con **Zenith WASAPI** en modo compartido.
+- **DAC USB dedicado (ej. FiiO / JadeAudio JA11, Topping, iFi, SMSL):** compatible con **WASAPI Exclusivo** (`WAVE_FORMAT_EXTENSIBLE` PCM 32-bit / 24-in-32) y con **ASIO (DSD Nativo)** cuando el fabricante provee driver ASIO.
+- **Protección de Modo Exclusivo:** el Modo Exclusivo inicia **desactivado por defecto**. Si intentas activarlo sobre una salida sin controlador DAC USB dedicado (como un jack 3.5 mm integrado o audífonos gaming), Zenith muestra una alerta y mantiene el Modo Exclusivo desactivado para evitar ruido blanco.
+- **ASIO Nativo (DSD64 / DSD128):** selecciona el motor `ASIO (DSD Nativo)`, elige tu driver (por ejemplo `FiiO ASIO Driver`) y abre su panel de control ASIO directamente desde Ajustes si deseas configurar el tamaño de buffer.
 
-Si no tienes DAC DSD, Zenith Audio puede convertir archivos DSD a PCM para reproducirlos igualmente por Windows.
+## 9. DSD, FIR Blackman-Harris, DoP y SACD ISO
 
-## 9. DSD, SACD ISO y conversión temporal
+Desde la versión 1.0.8, Zenith Audio ofrece 3 rutas completas para archivos `.dsf` y `.dff`:
 
-Los archivos DSF/DFF y SACD ISO pueden requerir conversión si el equipo no tiene soporte nativo DSD.
+1. **ASIO DSD Nativo:** envía el flujo DSD64 / DSD128 directo al DAC sin conversión a PCM (volumen fijo al 100% para preservar señal bit-perfect).
+2. **PCM FIR de fase lineal (Blackman-Harris):** decodificador multietapa propio con ganancia SACD seleccionable (`+0 dB`, `+3 dB`, `+6 dB`), limitador suave y frecuencia PCM objetivo (`Auto`, `44.1`, `88.2`, `176.4` o `352.8 kHz`). Funciona en cualquier salida de audio.
+3. **DoP Exclusivo (DSD sobre PCM):** disponible sobre DACs USB dedicados compatibles con DoP en WASAPI Exclusivo.
 
-Zenith Audio intenta:
-
-1. Detectar el formato del archivo.
-2. Revisar el dispositivo de salida.
-3. Usar una ruta compatible.
-4. Convertir temporalmente a PCM cuando sea necesario.
-
-Para SACD ISO, el proyecto usa `sacd_extract.exe` como herramienta externa. Por licencia y distribución, este binario puede no venir dentro del repositorio fuente, pero el instalador oficial puede incluir lo necesario según la release publicada.
-
-En la versión 1.0.6, DSF y DFF/DSDIFF sin compresión DST pueden reproducirse por fallback PCM en RAM. Si el archivo DFF usa compresión DST, se necesita MPV o BASS con `bassdsd.dll`.
+Para SACD ISO, el proyecto usa `sacd_extract.exe` como herramienta externa colocada en `runtimes/win-x64/native/`. Si un archivo `.dff` usa compresión DST, requiere MPV o BASS con `bassdsd.dll`.
 
 ## 9.1 WAV y fallback PCM de la versión 1.0.6
 
@@ -190,15 +181,33 @@ Si buscas una reproducción lo más fiel posible, usa perfil plano y DSP omitido
 
 ## 14. ZenithAI
 
-ZenithAI es un asistente integrado enfocado en audio. Puede ayudar con:
+ZenithAI es un asistente audiófilo integrado directamente con Zenith Audio mediante un panel flotante de 3 vistas (**Chat**, **Acciones** y **Config API**) y un **mini-reproductor sincronizado en vivo**.
 
-- Historia musical.
-- Formatos de audio.
-- Dudas sobre DSD, FLAC, PCM y DACs.
-- Sugerencias para escuchar mejor.
-- Interpretación general de la biblioteca cargada, usando solo la información que Zenith Audio le entrega.
+Puede ayudarte tanto con consultas técnicas/musicales como controlando el reproductor en tiempo real:
 
-ZenithAI usa API externa configurable. Las claves se guardan localmente y no deben subirse a GitHub.
+- Reproducir canciones de tu biblioteca cargada (*"pon Dark Side of the Moon"*), pausar, avanzar, retroceder, activar aleatorio o cambiar el volumen.
+- Cambiar motor (`WASAPI`, `ASIO`, `BASS`, `MPV`), dispositivo de salida, modo/ganancia/frecuencia DSD o lanzar el análisis Anti-Fake.
+- Aplicar perfiles tonales y ecualización biquad al instante con preamp anti-clipping.
+- En **Config API**, elegir entre 11 proveedores preconfigurados (`NVIDIA NIM`, `OpenAI`, `OpenRouter`, `Groq`, `Google Gemini`, `DeepSeek`, `Mistral`, `Together`, `Ollama`, `LM Studio` y `Personalizado`), pulsar **`Extraer modelos`** para cargar y filtrar el catálogo real de cualquier API, y verificar la conexión con **`Probar`**.
+
+Las claves API se cifran localmente por usuario en Windows y nunca se suben a GitHub. En servidores locales (`Ollama` / `LM Studio`) no se requiere API key.
+
+## 14.1 Control Remoto Web (Wi-Fi / LAN)
+
+Desde la versión 1.0.8 puedes controlar Zenith Audio de forma inalámbrica desde tu teléfono, tablet u otro equipo en la misma red Wi-Fi:
+
+1. Pulsa el botón **`Remoto`** ubicado junto a `ZenithAI` en la barra superior.
+2. Pulsa **`Iniciar servidor remoto`** (puerto por defecto `8787`, no requiere permisos de administrador).
+3. Si Windows Defender Firewall muestra un aviso la primera vez, permite el acceso en **Redes privadas**.
+4. Abre la dirección mostrada (`http://192.168.x.x:8787`) en el navegador de tu teléfono.
+
+La interfaz web responsiva (estilizada con Tailwind CSS en paleta OLED oscura + cian) ofrece 3 pestañas:
+
+- **Ahora:** carátula en vivo, barra VU, línea de tiempo, controles de reproducción, letra sincronizada y control de volumen.
+- **Canciones:** búsqueda instantánea en tu biblioteca cargada con filtros `Todas`, `DSD` y `Hi-Res PCM`.
+- **Audio:** cambio en vivo de salida de audio, motor (`WASAPI` / `ASIO` / `BASS` / `MPV`), driver ASIO, Modo Exclusivo (con protección DAC), ajustes DSD y ecualizador biquad.
+
+Opcionalmente puedes definir un **PIN de acceso** o activar el **inicio automático** del servidor desde el mismo panel.
 
 ## 15. Fundamentos Técnicos de las Funciones Principales
 
@@ -400,14 +409,26 @@ BASS y MPV son backends opcionales. Si no están instalados, Zenith usa rutas de
 
 Puede faltar `sacd_extract.exe` o el ISO puede no ser compatible. Prueba con una release reciente del instalador o revisa las herramientas nativas opcionales.
 
+### No puedo activar Modo Exclusivo (alerta de controlador DAC)
+
+Zenith Audio bloquea por seguridad el Modo Exclusivo en salidas integradas (como jack 3.5 mm Realtek o audífonos gaming) para evitar ruido blanco. Selecciona tu DAC USB dedicado en el selector superior o utiliza el motor **ASIO (DSD Nativo)** con el driver del fabricante.
+
+### Mi teléfono no carga el Control Remoto Web
+
+Revisa:
+
+- Que el servidor remoto esté **ACTIVO** desde el botón `Remoto` junto a `ZenithAI`.
+- Que el teléfono y el PC estén conectados a la misma red Wi-Fi.
+- Que la opción **Permitir acceso por red local Wi-Fi (0.0.0.0)** esté activada.
+- Que el Firewall de Windows permita conexiones entrantes a `ZenithAudio.exe` en **Redes privadas**.
+
 ### ZenithAI no responde
 
 Revisa:
 
-- Conexión a internet.
-- Endpoint/API configurado.
-- Clave API válida.
-- Tiempo de espera de la API externa.
+- Conexión a internet (o que Ollama / LM Studio estén abiertos si usas un servidor local).
+- Endpoint, modelo seleccionado y API key en **`ZenithAI → Config API`**.
+- Usa el botón **`Probar`** en `Config API` para comprobar la respuesta directa del proveedor.
 
 ## 17. Actualizaciones
 

@@ -1,22 +1,35 @@
-# Zenith Audio Architecture
+# Zenith Audio Architecture (v1.0.8)
 
-## Application Layer
+## Application Layer (`src/ZenithAudio/`)
 
-WinUI 3 owns the shell, now-playing screen, device profile controls, EQ screens, and future library browser.
+- **WinUI 3 + Windows App SDK 1.8** unpackaged `win-x64` shell (`MainWindow.xaml`, `MainWindow.xaml.cs`, `MainWindow.Remote.cs`).
+- Responsive OLED dark layout (`ApplyResponsiveLayout`) adapting across Wide Desktop, Half-Screen Split, and Compact widths, with dark Windows 11 titlebar customization (`ConfigureDarkTitleBar` + explicit `Icono.ico` and `Logo.png` resolution).
+- Right-hand inspector organized into three switchable views: **Cadena de señal**, **Control de tono / EQ**, and **Ajustes del sistema**.
+- Floating overlays for **ZenithAI** (`Chat` / `Acciones` / `Config API`) and **Control Remoto Web (LAN)**.
 
-## Audio Layer
+## Audio Layer (`src/ZenithAudio/Core/Audio/`)
 
-`AudioEngine` is the single public facade for playback. It can use:
+Zenith Audio supports hot-switching between integrated and optional native backends:
 
-- BASS + BASSWASAPI for explicit WASAPI Exclusive initialization and callback-driven decoding.
-- MPV/libmpv as an alternate backend for broad format support and future DSD workflows.
-
-The UI does not call native libraries directly.
+- **`WasapiPlaybackEngine`**: Native WASAPI Shared and Exclusive (Event/Push) via NAudio with custom `PcmExtensibleWaveFormat` (`KSDATAFORMAT_SUBTYPE_PCM` 32-bit and 24-in-32) for USB Audio 2.0 DAC drivers (Thesycon/FiiO), endpoint driver inspection (`InspectEndpointDriver`), and non-DAC Exclusive/DoP safety guards.
+- **`AsioPlaybackEngine`**: Native Steinberg ASIO 2.1 COM (`IASIO`) driver host supporting **Native DSD64 / DSD128** (`kAsioSetIoFormat = kASIODSDFormat`, click-free `0x69` DSD silence, LSB/MSB bit-order matching), ASIO PCM playback, and native ASIO Control Panel launching.
+- **`DsdDecoder` & `DsdPlaybackOptions`**: Multistage linear-phase Blackman-Harris FIR DSD→PCM decimator with 8-bit LUT, configurable SACD gain (`+0/+3/+6 dB`) + soft limiter, target PCM rates (`Auto`, `44.1`–`352.8 kHz`), and `DsdDoPWaveProvider`.
+- **`ToneControlSampleProvider`**: Real-time 3-band biquad EQ (Sub-bass 85 Hz, Presence 2.8 kHz, Air 11 kHz), Preamp, Volume, live RMS VU tap, and bit-transparent pass-through when bypassed at 100% volume.
+- **`AudioEngine`**: Optional external native facade for BASS + BASSWASAPI and libmpv/MPV backends.
 
 ## Library Layer
 
-The scanner will be implemented as a background pipeline with cancellation, batching, and metadata extraction workers so very large FLAC/DSD folders do not block the UI.
+- Resilient recursive scanner using `EnumerationOptions` (`IgnoreInaccessible = true`, skipping system/reparse entries) capable of indexing 60 GB+ FLAC/DSD/CUE/ISO libraries without aborting on protected subfolders.
+- Persists folder roots and audio/remote preferences per user under `%LOCALAPPDATA%\ZenithAudio\`.
 
-## EQ/Profile Layer
+## ZenithAI Layer (`src/ZenithAudio/Core/Ai/`)
 
-AutoEQ and manual TXT imports should normalize into the same `EqProfile` model before being applied to the active backend.
+- **`ZenithAiClient`**: Provider-agnostic OpenAI Chat Completions client with 11 built-in presets (NVIDIA NIM, OpenAI, OpenRouter, Groq, Gemini OpenAI-compat, DeepSeek, Mistral, Together, Ollama, LM Studio, Custom), universal model discovery (`GET /v1/models`, `/models`, `/api/tags`), and connection testing.
+- **`ZenithAiActionParser`**: Extracts structured `[[ZENITH_ACTION:...]]` player control directives and strips `<think>` reasoning blocks before display.
+- **`ZenithAiSettings`**: Per-user Windows DPAPI-protected credential storage with keyless support for local endpoints (`localhost` / `127.0.0.1`).
+
+## LAN Remote Control Layer (`src/ZenithAudio/Core/Remote/` & `Assets/Remote/`)
+
+- **`ZenithRemoteServer`**: Zero-admin HTTP/1.1 server built directly on `System.Net.Sockets.TcpListener`, auto-discovering active LAN IPv4 addresses and serving `/`, `/manifest.json`, `/favicon.ico`, `/logo.png`, `/api/state`, `/api/cover`, `/api/library`, and `/api/action`.
+- **`MainWindow.Remote.cs`**: Thread-safe UI-thread bridge (`IZenithRemoteBridge`) exposing live playback telemetry, album artwork caching, library search, output/engine/ASIO/Exclusive/DSD switching, and biquad EQ controls.
+- **`Assets/Remote/index.html`**: Mobile-first, PWA-ready live remote interface styled with Tailwind CSS matching Zenith Audio's OLED dark + luminous cyan palette.

@@ -2,7 +2,7 @@ namespace ZenithAudio.Core.Audio;
 
 public sealed class AudioEngineOptions
 {
-    public AudioBackend Backend { get; init; } = AudioBackend.BassWasapi;
+    public AudioBackend Backend { get; init; } = AudioBackend.ZenithWasapi;
 
     public bool UseWasapiExclusive { get; init; } = true;
 
