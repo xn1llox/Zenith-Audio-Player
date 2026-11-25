@@ -18,6 +18,8 @@ Zenith Audio Player es un reproductor de musica audiófilo para Windows creado c
 - Interfaz OLED redisenada con barra superior oscura de Windows 11, iconos vectoriales Hi-Fi de reproduccion, pestanas derechas (`Senal`, `Tono / EQ`, `Ajustes`) y diseno completamente responsivo.
 - **ZenithAI** integrado directamente con el reproductor (mini-reproductor en vivo, control de reproduccion/biblioteca/DAC/ASIO/DSD/EQ) y nuevo menu de 3 vistas (`Chat`, `Acciones`, `Config API`) con 11 proveedores preconfigurados y extraccion universal de modelos (`/v1/models`, `/models`, Ollama `/api/tags`).
 - **Control Remoto Web por red local (Wi-Fi / LAN)** con boton `Remoto` junto a `ZenithAI` para iniciar/detener el servidor y pagina responsiva con Tailwind CSS para controlar pistas, volumen, salida, motor, DSD y EQ desde el telefono.
+- **Actualizador automatico desde GitHub Releases** integrado en `Ajustes` (comprobacion al iniciar, barra de progreso e instalacion silenciosa con reapertura automatica).
+- **Pipeline de audio optimizado estilo foobar2000:** buffer de pre-lectura en RAM (~550 ms) con latencia de hardware WASAPI reducida (45–90 ms), lector DSD secuencial de 512 KB, *seek* sin chasquidos electricos (silencio DSD `0x69` + rampa cosenoidal *de-click*) y deslizador de tiempo sin microcortes.
 
 ## Novedades de 1.0.7
 
@@ -244,5 +246,7 @@ Si quieres colaborar con el proyecto y ayudar a seguir sacando actualizaciones:
 - Ko-Fi: `https://ko-fi.com/xn1llox`
 
 ## Licencia
+
+Desarrollado por **xn1llox** — [www.espinozainformatica.cl](https://www.espinozainformatica.cl)
 
 Este proyecto esta licenciado bajo Apache License 2.0. Revisa [LICENSE](LICENSE).

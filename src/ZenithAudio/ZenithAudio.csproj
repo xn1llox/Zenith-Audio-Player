@@ -16,6 +16,9 @@
     <Version>1.0.8</Version>
     <AssemblyVersion>1.0.8.0</AssemblyVersion>
     <FileVersion>1.0.8.0</FileVersion>
+    <Authors>xn1llox</Authors>
+    <Company>www.espinozainformatica.cl</Company>
+    <Product>Zenith Audio</Product>
   </PropertyGroup>
 
   <ItemGroup>

@@ -288,7 +288,14 @@ internal sealed class DsdByteReader : IDisposable
 
     public DsdByteReader(string filePath)
     {
-        _stream = File.OpenRead(filePath);
+        // Use a 512 KB sequential FileStream buffer so DSD128/DSD256 never stalls on HDD reads
+        _stream = new FileStream(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 512 * 1024,
+            FileOptions.SequentialScan);
         Metadata = DsdFileInspector.ReadMetadata(_stream);
         _totalBytesPerChannel = (long)(Metadata.SampleCount / 8UL);
         _blockBuffer = new byte[Metadata.BlockSizePerChannel * Metadata.Channels];
@@ -404,6 +411,7 @@ internal sealed class DsdByteReader : IDisposable
 /// </summary>
 public sealed class DsdPcmSampleProvider : ISampleProvider, IDisposable
 {
+    private const byte DsdSilenceByte = 0x69;
     private readonly DsdByteReader _reader;
     private readonly int _outputChannels;
     private readonly int _stage1StepBytes;
@@ -451,6 +459,7 @@ public sealed class DsdPcmSampleProvider : ISampleProvider, IDisposable
         for (var ch = 0; ch < _outputChannels; ch++)
         {
             _stage1History[ch] = new byte[_stage1FilterBytes];
+            Array.Fill(_stage1History[ch], DsdSilenceByte);
         }
 
         // Stage 2: Cascade 2x FIR decimators down to requested output sample rate
@@ -513,7 +522,9 @@ public sealed class DsdPcmSampleProvider : ISampleProvider, IDisposable
 
             for (var ch = 0; ch < _outputChannels; ch++)
             {
-                Array.Clear(_stage1History[ch]);
+                // In 1-bit DSD, 0x00 is full-scale -1.0 DC (causes a loud electrical pop).
+                // 0x69 (01101001) is true zero-DC DSD silence.
+                Array.Fill(_stage1History[ch], DsdSilenceByte);
                 _stage1WritePos[ch] = 0;
                 _ultrasonicFilters[ch].Reset();
             }
@@ -625,14 +636,18 @@ public sealed class DsdPcmSampleProvider : ISampleProvider, IDisposable
             var history = _stage1History[ch];
             var idx = _stage1WritePos[ch]; // oldest byte in ring buffer
             var sum = 0.0;
-            for (var b = 0; b < _stage1FilterBytes; b++)
+            var filterBytes = _stage1FilterBytes;
+            var firstLen = filterBytes - idx;
+            var b = 0;
+
+            for (var i = idx; i < filterBytes; i++, b++)
             {
-                sum += _stage1Lut[b][history[idx]];
-                idx++;
-                if (idx >= _stage1FilterBytes)
-                {
-                    idx = 0;
-                }
+                sum += _stage1Lut[b][history[i]];
+            }
+
+            for (var i = 0; i < idx; i++, b++)
+            {
+                sum += _stage1Lut[b][history[i]];
             }
 
             output[ch] = sum;
@@ -765,15 +780,15 @@ public sealed class DsdPcmSampleProvider : ISampleProvider, IDisposable
                 _writePos[ch] = pos;
 
                 var sum = 0.0;
-                var idx = pos;
-                for (var k = 0; k < _taps; k++)
+                var k = 0;
+                for (var i = pos; i < _taps; i++, k++)
                 {
-                    sum += hist[idx] * _coeffs[k];
-                    idx++;
-                    if (idx >= _taps)
-                    {
-                        idx = 0;
-                    }
+                    sum += hist[i] * _coeffs[k];
+                }
+
+                for (var i = 0; i < pos; i++, k++)
+                {
+                    sum += hist[i] * _coeffs[k];
                 }
 
                 output[ch] = sum;
@@ -828,6 +843,7 @@ public sealed class DsdPcmSampleProvider : ISampleProvider, IDisposable
 /// </summary>
 public sealed class DsdDoPWaveProvider : IWaveProvider, IDisposable
 {
+    private const byte DsdSilenceByte = 0x69;
     private static readonly byte[] BitReverseTable = BuildBitReverseTable();
     private readonly DsdByteReader _reader;
     private readonly object _syncLock = new();
@@ -836,6 +852,7 @@ public sealed class DsdDoPWaveProvider : IWaveProvider, IDisposable
     private long _currentDoPFrame;
     private readonly long _totalDoPFrames;
     private bool _markerToggle;
+    private int _seekSilenceFramesRemaining;
 
     public DsdDoPWaveProvider(string filePath, WaveFormat? targetWaveFormat = null, Action<double>? levelSink = null)
     {
@@ -863,7 +880,9 @@ public sealed class DsdDoPWaveProvider : IWaveProvider, IDisposable
             var targetDoPFrame = (long)Math.Round(clamped * Metadata.DoPPcmSampleRate);
             _reader.SeekByte(targetDoPFrame * 2);
             _currentDoPFrame = targetDoPFrame;
-            _markerToggle = (targetDoPFrame & 1) != 0;
+            // Keep _markerToggle alternating continuously so the DAC never loses DoP lock,
+            // and emit ~28 ms of valid DoP DSD silence (0x69/0x69) across the seek boundary.
+            _seekSilenceFramesRemaining = Math.Max(64, Metadata.DoPPcmSampleRate / 35);
         }
     }
 
@@ -883,7 +902,12 @@ public sealed class DsdDoPWaveProvider : IWaveProvider, IDisposable
 
             while (framesWritten < maxFrames && _currentDoPFrame < _totalDoPFrames)
             {
-                if (!_reader.ReadNextFrameBytes(firstByte) || !_reader.ReadNextFrameBytes(secondByte))
+                var emitSilence = _seekSilenceFramesRemaining > 0;
+                if (emitSilence)
+                {
+                    _seekSilenceFramesRemaining--;
+                }
+                else if (!_reader.ReadNextFrameBytes(firstByte) || !_reader.ReadNextFrameBytes(secondByte))
                 {
                     break;
                 }
@@ -894,8 +918,12 @@ public sealed class DsdDoPWaveProvider : IWaveProvider, IDisposable
                 var frameOffset = offset + (framesWritten * bytesPerFrame);
                 for (var ch = 0; ch < channels; ch++)
                 {
-                    var msbData = Metadata.IsLsbFirst ? BitReverseTable[firstByte[ch]] : firstByte[ch];
-                    var lsbData = Metadata.IsLsbFirst ? BitReverseTable[secondByte[ch]] : secondByte[ch];
+                    var msbData = emitSilence
+                        ? DsdSilenceByte
+                        : (Metadata.IsLsbFirst ? BitReverseTable[firstByte[ch]] : firstByte[ch]);
+                    var lsbData = emitSilence
+                        ? DsdSilenceByte
+                        : (Metadata.IsLsbFirst ? BitReverseTable[secondByte[ch]] : secondByte[ch]);
 
                     var sampleOffset = frameOffset + (ch * bytesPerSample);
                     if (_use32BitContainer)
@@ -912,15 +940,21 @@ public sealed class DsdDoPWaveProvider : IWaveProvider, IDisposable
                         buffer[sampleOffset + 2] = marker;
                     }
 
-                    // Estimate level for VU meter without altering the DoP bitstream
-                    var ones = System.Numerics.BitOperations.PopCount(msbData) + System.Numerics.BitOperations.PopCount(lsbData);
-                    var centered = ((ones / 16.0) * 2.0) - 1.0;
-                    energySum += centered * centered;
-                    energyCount++;
+                    if (!emitSilence)
+                    {
+                        // Estimate level for VU meter without altering the DoP bitstream
+                        var ones = System.Numerics.BitOperations.PopCount(msbData) + System.Numerics.BitOperations.PopCount(lsbData);
+                        var centered = ((ones / 16.0) * 2.0) - 1.0;
+                        energySum += centered * centered;
+                        energyCount++;
+                    }
                 }
 
                 framesWritten++;
-                _currentDoPFrame++;
+                if (!emitSilence)
+                {
+                    _currentDoPFrame++;
+                }
             }
 
             if (energyCount > 0)

@@ -117,10 +117,12 @@ public sealed partial class MainWindow : Window
     private bool _isPaused;
     private bool _usingFallbackPlayer;
     private bool _isSeeking;
+    private bool _hasPendingKeyboardSeek;
     private bool _isUpdatingPlaybackProgress;
     private string? _temporaryFallbackFilePath;
     private readonly MediaPlayer _fallbackMediaPlayer = new();
     private readonly DispatcherQueueTimer _playbackTimer;
+    private readonly DispatcherQueueTimer _seekCommitTimer;
     private readonly DispatcherQueueTimer _vuTimer;
     private double _vuTargetLevel;
     private double _vuSmoothedTargetLevel;
@@ -141,8 +143,11 @@ public sealed partial class MainWindow : Window
         SystemBackdrop = new MicaBackdrop();
         SetWindowIcon();
         _playbackTimer = DispatcherQueue.CreateTimer();
-        _playbackTimer.Interval = TimeSpan.FromMilliseconds(500);
+        _playbackTimer.Interval = TimeSpan.FromMilliseconds(180);
         _playbackTimer.Tick += PlaybackTimer_Tick;
+        _seekCommitTimer = DispatcherQueue.CreateTimer();
+        _seekCommitTimer.Interval = TimeSpan.FromMilliseconds(75);
+        _seekCommitTimer.Tick += SeekCommitTimer_Tick;
         _vuTimer = DispatcherQueue.CreateTimer();
         _vuTimer.Interval = TimeSpan.FromMilliseconds(16);
         _vuTimer.Tick += VuTimer_Tick;
@@ -160,6 +165,9 @@ public sealed partial class MainWindow : Window
             "Sony IER-M9"
         };
         AutoEqSearchBox.QuerySubmitted += AutoEqSearchBox_QuerySubmitted;
+        PlaybackProgressSlider.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackProgressSlider_PointerPressed), handledEventsToo: true);
+        PlaybackProgressSlider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackProgressSlider_PointerReleased), handledEventsToo: true);
+        PlaybackProgressSlider.AddHandler(UIElement.PointerCanceledEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(PlaybackProgressSlider_PointerReleased), handledEventsToo: true);
 
         _audioEngine.PlaybackStateChanged += AudioEngine_PlaybackStateChanged;
         _audioEngine.SignalChanged += AudioEngine_SignalChanged;
@@ -193,6 +201,7 @@ public sealed partial class MainWindow : Window
             ZenithAiProviderPresetComboBox.ItemsSource = ZenithAiClient.ProviderPresets;
         }
         InitializeRemoteControl();
+        InitializeAutoUpdater();
         _ = RefreshOutputDevicesAsync();
         _ = LoadSavedLibraryFoldersAsync();
     }
@@ -257,6 +266,11 @@ public sealed partial class MainWindow : Window
         SystemSettingsBorder.Visibility = tabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         ToneControlCardBorder.Visibility = tabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
         SystemConfigCardBorder.Visibility = tabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+
+        if (UpdateCardBorder is not null)
+        {
+            UpdateCardBorder.Visibility = tabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+        }
 
         if (CreditsCardBorder is not null)
         {
@@ -3276,6 +3290,15 @@ public sealed partial class MainWindow : Window
         return terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private static bool IsPrimaryMouseButtonPressed()
+    {
+        const int vkLButton = 0x01;
+        return (GetAsyncKeyState(vkLButton) & 0x8000) != 0;
+    }
+
     private void PlaybackProgressSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (_isUpdatingPlaybackProgress)
@@ -3283,18 +3306,72 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        SeekFallbackPlayer(TimeSpan.FromSeconds(e.NewValue));
+        var target = TimeSpan.FromSeconds(Math.Max(0, e.NewValue));
+        if (CurrentTimeTextBlock is not null)
+        {
+            CurrentTimeTextBlock.Text = FormatTime(target);
+        }
+
+        // If user is holding the mouse button to slide, ONLY preview timestamp — never spam Seek mid-drag!
+        if (_isSeeking || IsPrimaryMouseButtonPressed())
+        {
+            _isSeeking = true;
+            _hasPendingKeyboardSeek = false;
+            _seekCommitTimer.Start();
+            return;
+        }
+
+        // Keyboard arrows or single non-drag jump: coalesce briefly to avoid rapid redundant seeks
+        _hasPendingKeyboardSeek = true;
+        _seekCommitTimer.Stop();
+        _seekCommitTimer.Start();
     }
 
     private void PlaybackProgressSlider_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
         _isSeeking = true;
+        _hasPendingKeyboardSeek = false;
+        _seekCommitTimer.Start();
     }
 
     private void PlaybackProgressSlider_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
-        SeekFallbackPlayer(TimeSpan.FromSeconds(PlaybackProgressSlider.Value));
+        CommitSliderSeek();
+    }
+
+    private void SeekCommitTimer_Tick(object? sender, object e)
+    {
+        // While mouse button is still held down during drag, wait until release
+        if (_isSeeking)
+        {
+            if (IsPrimaryMouseButtonPressed())
+            {
+                return;
+            }
+
+            CommitSliderSeek();
+            return;
+        }
+
+        _seekCommitTimer.Stop();
+        if (_hasPendingKeyboardSeek)
+        {
+            _hasPendingKeyboardSeek = false;
+            SeekFallbackPlayer(TimeSpan.FromSeconds(Math.Max(0, PlaybackProgressSlider.Value)));
+        }
+    }
+
+    private void CommitSliderSeek()
+    {
+        _seekCommitTimer.Stop();
+        _hasPendingKeyboardSeek = false;
+        if (!_isSeeking)
+        {
+            return;
+        }
+
         _isSeeking = false;
+        SeekFallbackPlayer(TimeSpan.FromSeconds(Math.Max(0, PlaybackProgressSlider.Value)));
     }
 
     private void ScanThreadsSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -6110,6 +6187,7 @@ public sealed partial class MainWindow : Window
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        DisposeAutoUpdater();
         _remoteServer?.Dispose();
         CleanupAllTemporaryFallbackFiles();
         _asioEngine.Dispose();

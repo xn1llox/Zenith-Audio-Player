@@ -451,7 +451,7 @@ Si quieres colaborar con el proyecto y ayudar a seguir sacando actualizaciones:
 
 ## 19. Créditos
 
-Desarrollado por Felipe Espinoza `XN1ll0X` desde Chile.
+Desarrollado por **xn1llox** — [www.espinozainformatica.cl](https://www.espinozainformatica.cl)
 
 Proyecto publicado bajo Apache License 2.0.
 

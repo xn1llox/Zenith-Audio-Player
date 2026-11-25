@@ -1,6 +1,7 @@
 #define MyAppName "Zenith Audio"
 #define MyAppVersion "1.0.8"
-#define MyAppPublisher "Felipe Espinoza"
+#define MyAppPublisher "xn1llox - www.espinozainformatica.cl"
+#define MyAppURL "https://www.espinozainformatica.cl"
 #define MyAppExeName "ZenithAudio.exe"
 #ifndef SourceDir
   #define SourceDir "..\src\ZenithAudio\bin\Release\net8.0-windows10.0.19041.0\win-x64"
@@ -13,6 +14,9 @@ AppId={{A4C11848-F4F1-4745-9F0F-6FEF6846730C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL=https://github.com/xn1llox/Zenith-Audio-Player/releases
 DefaultDirName={autopf}\Zenith Audio
 DefaultGroupName=Zenith Audio
 DisableProgramGroupPage=yes
@@ -51,7 +55,8 @@ Name: "{autodesktop}\Zenith Audio"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 [Run]
 Filename: "{tmp}\{#DotNetDesktopRuntimeInstaller}"; Parameters: "/install /quiet /norestart"; StatusMsg: "Instalando .NET Desktop Runtime 8 x64..."; Check: NeedsDotNetDesktopRuntime; Flags: waituntilterminated
 Filename: "{tmp}\{#WindowsAppRuntimeInstaller}"; Parameters: "--quiet"; StatusMsg: "Instalando Windows App Runtime 1.8 x64..."; Flags: waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Zenith Audio"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Zenith Audio"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall runasoriginaluser; Check: WizardSilent
 
 [Code]
 function GetInstalledZenithVersion(var InstalledVersion: String): Boolean;
@@ -75,7 +80,7 @@ var
 begin
   Result := True;
 
-  if GetInstalledZenithVersion(InstalledVersion) then
+  if (not WizardSilent) and GetInstalledZenithVersion(InstalledVersion) then
   begin
     MsgBox(
       'Zenith Audio ya está instalado en este sistema.' + #13#10 + #13#10 +

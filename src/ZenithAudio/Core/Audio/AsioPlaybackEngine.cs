@@ -37,6 +37,7 @@ public sealed class AsioPlaybackEngine : IDisposable
     private readonly object _syncLock = new();
     private NativeAsioDsdSession? _nativeDsdSession;
     private AsioOut? _pcmAsioOut;
+    private BufferedAudioSampleProvider? _bufferedSource;
     private IDisposable? _pcmSourceOwner;
     private ToneControlSampleProvider? _toneProcessor;
     private Action<TimeSpan>? _seekAction;
@@ -300,6 +301,7 @@ public sealed class AsioPlaybackEngine : IDisposable
 
             if (_pcmAsioOut?.PlaybackState == NAudio.Wave.PlaybackState.Paused)
             {
+                _toneProcessor?.ArmResumeRamp();
                 _pcmAsioOut.Play();
             }
         }
@@ -319,7 +321,15 @@ public sealed class AsioPlaybackEngine : IDisposable
             var clamped = duration > TimeSpan.Zero
                 ? TimeSpan.FromSeconds(Math.Clamp(position.TotalSeconds, 0.0, duration.TotalSeconds))
                 : TimeSpan.Zero;
-            _seekAction?.Invoke(clamped);
+
+            if (_toneProcessor is not null && _seekAction is not null)
+            {
+                _toneProcessor.ExecuteSeekSafely(() => _seekAction(clamped));
+            }
+            else
+            {
+                _seekAction?.Invoke(clamped);
+            }
         }
     }
 
@@ -327,6 +337,7 @@ public sealed class AsioPlaybackEngine : IDisposable
     {
         NativeAsioDsdSession? dsdSession;
         AsioOut? pcmAsio;
+        BufferedAudioSampleProvider? buffered;
         IDisposable? pcmSource;
 
         lock (_syncLock)
@@ -334,9 +345,11 @@ public sealed class AsioPlaybackEngine : IDisposable
             _manualStop = true;
             dsdSession = _nativeDsdSession;
             pcmAsio = _pcmAsioOut;
+            buffered = _bufferedSource;
             pcmSource = _pcmSourceOwner;
             _nativeDsdSession = null;
             _pcmAsioOut = null;
+            _bufferedSource = null;
             _pcmSourceOwner = null;
             _toneProcessor = null;
             _seekAction = null;
@@ -372,6 +385,14 @@ public sealed class AsioPlaybackEngine : IDisposable
             catch
             {
             }
+        }
+
+        try
+        {
+            buffered?.Dispose();
+        }
+        catch
+        {
         }
 
         try
@@ -495,7 +516,8 @@ public sealed class AsioPlaybackEngine : IDisposable
         Func<TimeSpan> positionGetter,
         Func<TimeSpan> durationGetter)
     {
-        var toneProcessor = new ToneControlSampleProvider(rawSamples, toneSettings, RaiseLevel, Volume);
+        var buffered = new BufferedAudioSampleProvider(rawSamples, seekAction, positionGetter, durationGetter, readAheadMilliseconds: 550);
+        var toneProcessor = new ToneControlSampleProvider(buffered, toneSettings, RaiseLevel, Volume);
         var asioOut = new AsioOut(driver.Name);
 
         try
@@ -530,11 +552,12 @@ public sealed class AsioPlaybackEngine : IDisposable
             {
                 _manualStop = false;
                 _pcmAsioOut = asioOut;
+                _bufferedSource = buffered;
                 _pcmSourceOwner = sourceOwner;
                 _toneProcessor = toneProcessor;
                 _isNativeDsdActive = false;
-                _seekAction = seekAction;
-                _positionGetter = positionGetter;
+                _seekAction = buffered.RequestSeek;
+                _positionGetter = () => buffered.Position;
                 _durationGetter = durationGetter;
             }
 
@@ -559,6 +582,7 @@ public sealed class AsioPlaybackEngine : IDisposable
         catch
         {
             asioOut.Dispose();
+            buffered.Dispose();
             throw;
         }
     }
@@ -846,6 +870,8 @@ public sealed class AsioPlaybackEngine : IDisposable
             }
         }
 
+        private int _seekMuteBuffersRemaining;
+
         public void Seek(TimeSpan position)
         {
             lock (_readLock)
@@ -854,6 +880,10 @@ public sealed class AsioPlaybackEngine : IDisposable
                 var targetByte = (long)Math.Round((clamped * Metadata.SampleRate) / 8.0);
                 _reader.SeekByte(targetByte);
                 _endedSignaled = false;
+                // Output ~18 ms of zero-DC DSD silence (0x69) across the seek boundary
+                // so the DAC's 1-bit sigma-delta integrator settles smoothly with minimal latency.
+                var bytesPerBuffer = Math.Max(1, _bufferBytesPerChannel);
+                _seekMuteBuffersRemaining = Math.Max(1, (int)Math.Ceiling((Metadata.SampleRate * 0.018) / (bytesPerBuffer * 8.0)));
             }
         }
 
@@ -918,6 +948,22 @@ public sealed class AsioPlaybackEngine : IDisposable
 
             lock (_readLock)
             {
+                if (_seekMuteBuffersRemaining > 0)
+                {
+                    _seekMuteBuffersRemaining--;
+                    for (var ch = 0; ch < channels; ch++)
+                    {
+                        var dst = doubleBufferIndex == 0 ? infos[ch].Buffer0 : infos[ch].Buffer1;
+                        if (dst != IntPtr.Zero)
+                        {
+                            new Span<byte>((void*)dst, bytesPerChannel).Fill(DsdSilenceByte);
+                        }
+                    }
+
+                    CallOutputReady();
+                    return;
+                }
+
                 Span<byte> frameBytes = stackalloc byte[Metadata.Channels];
                 var byteIndex = 0;
                 while (byteIndex < bytesPerChannel)

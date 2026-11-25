@@ -1631,6 +1631,109 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- GitHub Auto-Updater Card (shown in Ajustes tab) -->
+                        <Border x:Name="UpdateCardBorder"
+                                Visibility="Collapsed"
+                                CornerRadius="12"
+                                Padding="14"
+                                Background="#040910"
+                                BorderBrush="#10283D"
+                                BorderThickness="1">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="ACTUALIZACIONES (GITHUB)"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               CharacterSpacing="80"
+                                               Foreground="#6C9BB8"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Column="1"
+                                            CornerRadius="999"
+                                            Padding="8,2"
+                                            Background="#072236"
+                                            BorderBrush="#1E5F8A"
+                                            BorderThickness="1">
+                                        <TextBlock x:Name="AppVersionBadgeTextBlock"
+                                                   Text="v1.0.8"
+                                                   FontSize="10"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#95DBFF" />
+                                    </Border>
+                                </Grid>
+
+                                <TextBlock x:Name="UpdateStatusTextBlock"
+                                           Text="Comprobación automática al iniciar activada."
+                                           FontSize="12"
+                                           Foreground="#A5C8E0"
+                                           TextWrapping="Wrap" />
+
+                                <StackPanel x:Name="UpdateDownloadProgressPanel"
+                                            Visibility="Collapsed"
+                                            Spacing="4">
+                                    <ProgressBar x:Name="UpdateDownloadProgressBar"
+                                                 Minimum="0"
+                                                 Maximum="100"
+                                                 Value="0"
+                                                 Foreground="#46BFFF" />
+                                    <TextBlock x:Name="UpdateDownloadProgressTextBlock"
+                                               Text="0%"
+                                               FontSize="11"
+                                               Foreground="#84C8EC" />
+                                </StackPanel>
+
+                                <ToggleSwitch x:Name="AutoCheckUpdatesToggle"
+                                              Header="Buscar actualizaciones al iniciar"
+                                              OnContent="Activado"
+                                              OffContent="Desactivado"
+                                              IsOn="True"
+                                              Toggled="AutoCheckUpdatesToggle_Toggled" />
+
+                                <ToggleSwitch x:Name="AutoInstallUpdatesToggle"
+                                              Header="Descargar e instalar automáticamente"
+                                              OnContent="Automático"
+                                              OffContent="Preguntar primero"
+                                              IsOn="False"
+                                              Toggled="AutoInstallUpdatesToggle_Toggled" />
+
+                                <StackPanel Spacing="8">
+                                    <Button x:Name="CheckUpdatesButton"
+                                            Click="CheckUpdatesButton_Click"
+                                            HorizontalAlignment="Stretch"
+                                            CornerRadius="8"
+                                            Padding="10,8"
+                                            Background="#071C2E"
+                                            BorderBrush="#1A547A">
+                                        <StackPanel Orientation="Horizontal" Spacing="7" HorizontalAlignment="Center">
+                                            <FontIcon Glyph="&#xE72C;" FontSize="12" Foreground="#7AD5FF" />
+                                            <TextBlock Text="Buscar actualizaciones" FontSize="12" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button x:Name="InstallUpdateButton"
+                                            Visibility="Collapsed"
+                                            Click="InstallUpdateButton_Click"
+                                            HorizontalAlignment="Stretch"
+                                            CornerRadius="8"
+                                            Padding="10,8"
+                                            Background="#0A4C78"
+                                            BorderBrush="#38B6FF"
+                                            Foreground="#F0FAFF">
+                                        <StackPanel Orientation="Horizontal" Spacing="7" HorizontalAlignment="Center">
+                                            <FontIcon Glyph="&#xE896;" FontSize="12" Foreground="#A2E5FF" />
+                                            <TextBlock x:Name="InstallUpdateButtonTextBlock"
+                                                       Text="Descargar e instalar"
+                                                       FontSize="12"
+                                                       FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Credits Card (shown in Ajustes tab) -->
                         <Border x:Name="CreditsCardBorder"
                                 Visibility="Collapsed"
@@ -1639,16 +1742,27 @@
                                 Background="#040910"
                                 BorderBrush="#10283D"
                                 BorderThickness="1">
-                            <StackPanel Spacing="2">
+                            <StackPanel Spacing="4">
                                 <TextBlock Text="DESARROLLADO POR"
                                            FontSize="10"
                                            FontWeight="SemiBold"
                                            CharacterSpacing="80"
                                            Foreground="#6C9BB8" />
-                                <TextBlock Text="Felipe Espinoza 'XN1ll0X' (Chile)"
-                                           FontSize="14"
+                                <TextBlock Text="xn1llox"
+                                           FontSize="15"
                                            FontWeight="SemiBold"
-                                           Foreground="#DCEFFF" />
+                                           Foreground="#EAF6FF" />
+                                <Button Click="OpenDeveloperWebsiteButton_Click"
+                                        HorizontalAlignment="Left"
+                                        Padding="0,2"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        ToolTipService.ToolTip="Abrir www.espinozainformatica.cl">
+                                    <TextBlock Text="www.espinozainformatica.cl"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="#5BC8FF" />
+                                </Button>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -1822,8 +1936,6 @@
                             Maximum="1"
                             Value="0"
                             VerticalAlignment="Center"
-                            PointerPressed="PlaybackProgressSlider_PointerPressed"
-                            PointerReleased="PlaybackProgressSlider_PointerReleased"
                             ValueChanged="PlaybackProgressSlider_ValueChanged" />
 
                     <TextBlock x:Name="DurationTextBlock"

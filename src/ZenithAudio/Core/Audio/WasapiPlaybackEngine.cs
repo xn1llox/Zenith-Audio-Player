@@ -30,6 +30,7 @@ public sealed class WasapiPlaybackEngine : IDisposable
     private readonly object _syncLock = new();
     private WasapiOut? _wasapiOut;
     private MMDevice? _activeDevice;
+    private BufferedAudioSampleProvider? _bufferedSource;
     private IDisposable? _activeSource;
     private Action<TimeSpan>? _seekAction;
     private Func<TimeSpan>? _positionGetter;
@@ -195,6 +196,7 @@ public sealed class WasapiPlaybackEngine : IDisposable
         {
             if (_wasapiOut?.PlaybackState == NAudio.Wave.PlaybackState.Paused)
             {
+                _toneProcessor?.ArmResumeRamp();
                 _wasapiOut.Play();
             }
         }
@@ -208,13 +210,22 @@ public sealed class WasapiPlaybackEngine : IDisposable
             var clamped = duration > TimeSpan.Zero
                 ? TimeSpan.FromSeconds(Math.Clamp(position.TotalSeconds, 0.0, duration.TotalSeconds))
                 : TimeSpan.Zero;
-            _seekAction?.Invoke(clamped);
+
+            if (_toneProcessor is not null && _seekAction is not null)
+            {
+                _toneProcessor.ExecuteSeekSafely(() => _seekAction(clamped));
+            }
+            else
+            {
+                _seekAction?.Invoke(clamped);
+            }
         }
     }
 
     public void Stop()
     {
         WasapiOut? wasapi;
+        BufferedAudioSampleProvider? buffered;
         IDisposable? source;
         MMDevice? device;
 
@@ -222,9 +233,11 @@ public sealed class WasapiPlaybackEngine : IDisposable
         {
             _manualStop = true;
             wasapi = _wasapiOut;
+            buffered = _bufferedSource;
             source = _activeSource;
             device = _activeDevice;
             _wasapiOut = null;
+            _bufferedSource = null;
             _activeSource = null;
             _activeDevice = null;
             _seekAction = null;
@@ -247,6 +260,14 @@ public sealed class WasapiPlaybackEngine : IDisposable
             }
 
             wasapi.Dispose();
+        }
+
+        try
+        {
+            buffered?.Dispose();
+        }
+        catch
+        {
         }
 
         try
@@ -315,11 +336,12 @@ public sealed class WasapiPlaybackEngine : IDisposable
                     dopProvider.Seek(pos);
                 }
 
-                if (TryCreateAndInitWasapi(device, AudioClientShareMode.Exclusive, dopProvider, latencyMs, out var wasapiOut, out var isEventDriven))
+                if (TryCreateAndInitWasapi(device, AudioClientShareMode.Exclusive, dopProvider, Math.Clamp(latencyMs, 50, 120), out var wasapiOut, out var isEventDriven))
                 {
                     AttachAndPlay(
                         device,
                         wasapiOut!,
+                        bufferedSource: null,
                         dopProvider,
                         toneProcessor: null,
                         isDoP: true,
@@ -465,140 +487,154 @@ public sealed class WasapiPlaybackEngine : IDisposable
         Func<TimeSpan> positionGetter,
         Func<TimeSpan> durationGetter)
     {
-        var toneProcessor = new ToneControlSampleProvider(rawSamples, toneSettings, RaiseLevel, Volume);
+        // Decoupled software read-ahead ring buffer (~550 ms in RAM) + tight WASAPI hardware latency (45-90 ms)
+        // like foobar2000: near-instant glitch-free seek and zero disk stalls on the real-time audio thread!
+        var readAheadMs = Math.Clamp(latencyMs + 350, 450, 900);
+        var hardwareLatencyMs = Math.Clamp(latencyMs, 45, 90);
+        var buffered = new BufferedAudioSampleProvider(rawSamples, seekAction, positionGetter, durationGetter, readAheadMs);
+        var toneProcessor = new ToneControlSampleProvider(buffered, toneSettings, RaiseLevel, Volume);
         var sourceRate = toneProcessor.WaveFormat.SampleRate;
         var sourceChannels = toneProcessor.WaveFormat.Channels;
         var dspActive = toneSettings?.IsActive == true;
         var volumeUnity = Volume >= 0.995f;
 
-        if (requestExclusive)
+        try
         {
-            // 1. Try native sample rate & channels first (Bit-Perfect!)
-            if (TryStartExclusiveSampleProvider(device, toneProcessor, latencyMs, out var exclusiveOut, out var exclusiveBits, out var isEventDriven))
+            if (requestExclusive)
             {
-                AttachAndPlay(device, exclusiveOut!, sourceOwner, toneProcessor, isDoP: false, seekAction, positionGetter, durationGetter);
-                var isBitPerfect = !isDsdSource && !dspActive && volumeUnity;
-                var modeLabel = isEventDriven ? "WASAPI Exclusivo (Event)" : "WASAPI Exclusivo (Push)";
-                return new WasapiPlaybackReport(
-                    device.FriendlyName,
-                    IsExclusive: true,
-                    IsEventDriven: isEventDriven,
-                    IsDoP: false,
-                    IsDsdSource: isDsdSource,
-                    IsBitPerfect: isBitPerfect,
-                    IsResampled: false,
-                    OutputSampleRate: sourceRate,
-                    OutputBitDepth: exclusiveBits,
-                    OutputChannels: sourceChannels,
-                    SourceCodec: sourceCodec,
-                    DecodeLabel: decodeBaseLabel,
-                    Summary: $"{modeLabel}: {sourceRate / 1000.0:0.#} kHz / {exclusiveBits}-bit en {device.FriendlyName}");
-            }
-
-            // 2. If native channels > 2 failed, try stereo downmix at native sample rate
-            ISampleProvider exclusiveCandidate = toneProcessor;
-            var outputChannels = sourceChannels;
-            if (sourceChannels > 2)
-            {
-                exclusiveCandidate = new StereoDownmixSampleProvider(toneProcessor);
-                outputChannels = 2;
-                if (TryStartExclusiveSampleProvider(device, exclusiveCandidate, latencyMs, out var downmixOut, out var downmixBits, out var downmixEvent))
+                // 1. Try native sample rate & channels first (Bit-Perfect!)
+                if (TryStartExclusiveSampleProvider(device, toneProcessor, hardwareLatencyMs, out var exclusiveOut, out var exclusiveBits, out var isEventDriven))
                 {
-                    AttachAndPlay(device, downmixOut!, sourceOwner, toneProcessor, isDoP: false, seekAction, positionGetter, durationGetter);
+                    AttachAndPlay(device, exclusiveOut!, buffered, sourceOwner, toneProcessor, isDoP: false, buffered.RequestSeek, () => buffered.Position, durationGetter);
+                    var isBitPerfect = !isDsdSource && !dspActive && volumeUnity;
+                    var modeLabel = isEventDriven ? "WASAPI Exclusivo (Event)" : "WASAPI Exclusivo (Push)";
                     return new WasapiPlaybackReport(
                         device.FriendlyName,
                         IsExclusive: true,
-                        IsEventDriven: downmixEvent,
+                        IsEventDriven: isEventDriven,
                         IsDoP: false,
                         IsDsdSource: isDsdSource,
-                        IsBitPerfect: false,
+                        IsBitPerfect: isBitPerfect,
                         IsResampled: false,
                         OutputSampleRate: sourceRate,
-                        OutputBitDepth: downmixBits,
-                        OutputChannels: outputChannels,
+                        OutputBitDepth: exclusiveBits,
+                        OutputChannels: sourceChannels,
                         SourceCodec: sourceCodec,
-                        DecodeLabel: $"{decodeBaseLabel} (Estéreo)",
-                        Summary: $"WASAPI Exclusivo (downmix estéreo): {sourceRate / 1000.0:0.#} kHz / {downmixBits}-bit en {device.FriendlyName}");
+                        DecodeLabel: decodeBaseLabel,
+                        Summary: $"{modeLabel}: {sourceRate / 1000.0:0.#} kHz / {exclusiveBits}-bit en {device.FriendlyName}");
                 }
-            }
 
-            // 3. Try resampling cleanly to the highest exclusive rate supported by the endpoint
-            var targetExclusiveRate = FindBestSupportedExclusiveRate(device, sourceRate, outputChannels);
-            if (targetExclusiveRate > 0 && targetExclusiveRate != sourceRate)
-            {
-                var resampled = new WdlResamplingSampleProvider(exclusiveCandidate, targetExclusiveRate);
-                if (TryStartExclusiveSampleProvider(device, resampled, latencyMs, out var resampledOut, out var resampledBits, out var resampledEvent))
+                // 2. If native channels > 2 failed, try stereo downmix at native sample rate
+                ISampleProvider exclusiveCandidate = toneProcessor;
+                var outputChannels = sourceChannels;
+                if (sourceChannels > 2)
                 {
-                    AttachAndPlay(device, resampledOut!, sourceOwner, toneProcessor, isDoP: false, seekAction, positionGetter, durationGetter);
-                    return new WasapiPlaybackReport(
-                        device.FriendlyName,
-                        IsExclusive: true,
-                        IsEventDriven: resampledEvent,
-                        IsDoP: false,
-                        IsDsdSource: isDsdSource,
-                        IsBitPerfect: false,
-                        IsResampled: true,
-                        OutputSampleRate: targetExclusiveRate,
-                        OutputBitDepth: resampledBits,
-                        OutputChannels: outputChannels,
-                        SourceCodec: sourceCodec,
-                        DecodeLabel: $"{decodeBaseLabel} -> {targetExclusiveRate / 1000.0:0.#} kHz",
-                        Summary: $"WASAPI Exclusivo (adaptado a {targetExclusiveRate / 1000.0:0.#} kHz/{resampledBits}-bit) en {device.FriendlyName}");
+                    exclusiveCandidate = new StereoDownmixSampleProvider(toneProcessor);
+                    outputChannels = 2;
+                    if (TryStartExclusiveSampleProvider(device, exclusiveCandidate, hardwareLatencyMs, out var downmixOut, out var downmixBits, out var downmixEvent))
+                    {
+                        AttachAndPlay(device, downmixOut!, buffered, sourceOwner, toneProcessor, isDoP: false, buffered.RequestSeek, () => buffered.Position, durationGetter);
+                        return new WasapiPlaybackReport(
+                            device.FriendlyName,
+                            IsExclusive: true,
+                            IsEventDriven: downmixEvent,
+                            IsDoP: false,
+                            IsDsdSource: isDsdSource,
+                            IsBitPerfect: false,
+                            IsResampled: false,
+                            OutputSampleRate: sourceRate,
+                            OutputBitDepth: downmixBits,
+                            OutputChannels: outputChannels,
+                            SourceCodec: sourceCodec,
+                            DecodeLabel: $"{decodeBaseLabel} (Estéreo)",
+                            Summary: $"WASAPI Exclusivo (downmix estéreo): {sourceRate / 1000.0:0.#} kHz / {downmixBits}-bit en {device.FriendlyName}");
+                    }
+                }
+
+                // 3. Try resampling cleanly to the highest exclusive rate supported by the endpoint
+                var targetExclusiveRate = FindBestSupportedExclusiveRate(device, sourceRate, outputChannels);
+                if (targetExclusiveRate > 0 && targetExclusiveRate != sourceRate)
+                {
+                    var resampled = new WdlResamplingSampleProvider(exclusiveCandidate, targetExclusiveRate);
+                    if (TryStartExclusiveSampleProvider(device, resampled, hardwareLatencyMs, out var resampledOut, out var resampledBits, out var resampledEvent))
+                    {
+                        AttachAndPlay(device, resampledOut!, buffered, sourceOwner, toneProcessor, isDoP: false, buffered.RequestSeek, () => buffered.Position, durationGetter);
+                        return new WasapiPlaybackReport(
+                            device.FriendlyName,
+                            IsExclusive: true,
+                            IsEventDriven: resampledEvent,
+                            IsDoP: false,
+                            IsDsdSource: isDsdSource,
+                            IsBitPerfect: false,
+                            IsResampled: true,
+                            OutputSampleRate: targetExclusiveRate,
+                            OutputBitDepth: resampledBits,
+                            OutputChannels: outputChannels,
+                            SourceCodec: sourceCodec,
+                            DecodeLabel: $"{decodeBaseLabel} -> {targetExclusiveRate / 1000.0:0.#} kHz",
+                            Summary: $"WASAPI Exclusivo (adaptado a {targetExclusiveRate / 1000.0:0.#} kHz/{resampledBits}-bit) en {device.FriendlyName}");
+                    }
                 }
             }
+
+            // WASAPI Shared path (reliable fallback or user-selected Shared mode)
+            var mixFormat = device.AudioClient.MixFormat;
+            ISampleProvider sharedPipeline = toneProcessor;
+            var sharedResampled = false;
+
+            if (sharedPipeline.WaveFormat.Channels > mixFormat.Channels && mixFormat.Channels == 2)
+            {
+                sharedPipeline = new StereoDownmixSampleProvider(sharedPipeline);
+            }
+            else if (sharedPipeline.WaveFormat.Channels == 1 && mixFormat.Channels >= 2)
+            {
+                sharedPipeline = new MonoToStereoSampleProvider(sharedPipeline);
+            }
+
+            if (sharedPipeline.WaveFormat.SampleRate != mixFormat.SampleRate)
+            {
+                sharedPipeline = new WdlResamplingSampleProvider(sharedPipeline, mixFormat.SampleRate);
+                sharedResampled = true;
+            }
+
+            var sharedWave = sharedPipeline.ToWaveProvider();
+            if (!TryCreateAndInitWasapi(device, AudioClientShareMode.Shared, sharedWave, hardwareLatencyMs, out var sharedOut, out var sharedEvent))
+            {
+                throw new InvalidOperationException($"No se pudo inicializar WASAPI en '{device.FriendlyName}'. Verifica que el dispositivo esté conectado y activo.");
+            }
+
+            AttachAndPlay(device, sharedOut!, buffered, sourceOwner, toneProcessor, isDoP: false, buffered.RequestSeek, () => buffered.Position, durationGetter);
+
+            var sharedNote = requestExclusive
+                ? $"Modo exclusivo no disponible en {device.FriendlyName}; usando WASAPI Compartido ({mixFormat.SampleRate / 1000.0:0.#} kHz/32-bit float)."
+                : $"WASAPI Compartido: {mixFormat.SampleRate / 1000.0:0.#} kHz / 32-bit float en {device.FriendlyName}";
+
+            return new WasapiPlaybackReport(
+                device.FriendlyName,
+                IsExclusive: false,
+                IsEventDriven: sharedEvent,
+                IsDoP: false,
+                IsDsdSource: isDsdSource,
+                IsBitPerfect: false,
+                IsResampled: sharedResampled,
+                OutputSampleRate: mixFormat.SampleRate,
+                OutputBitDepth: 32,
+                OutputChannels: sharedPipeline.WaveFormat.Channels,
+                SourceCodec: sourceCodec,
+                DecodeLabel: sharedResampled ? $"{decodeBaseLabel} -> {mixFormat.SampleRate / 1000.0:0.#} kHz" : decodeBaseLabel,
+                Summary: sharedNote);
         }
-
-        // WASAPI Shared path (reliable fallback or user-selected Shared mode)
-        var mixFormat = device.AudioClient.MixFormat;
-        ISampleProvider sharedPipeline = toneProcessor;
-        var sharedResampled = false;
-
-        if (sharedPipeline.WaveFormat.Channels > mixFormat.Channels && mixFormat.Channels == 2)
+        catch
         {
-            sharedPipeline = new StereoDownmixSampleProvider(sharedPipeline);
+            buffered.Dispose();
+            throw;
         }
-        else if (sharedPipeline.WaveFormat.Channels == 1 && mixFormat.Channels >= 2)
-        {
-            sharedPipeline = new MonoToStereoSampleProvider(sharedPipeline);
-        }
-
-        if (sharedPipeline.WaveFormat.SampleRate != mixFormat.SampleRate)
-        {
-            sharedPipeline = new WdlResamplingSampleProvider(sharedPipeline, mixFormat.SampleRate);
-            sharedResampled = true;
-        }
-
-        var sharedWave = sharedPipeline.ToWaveProvider();
-        if (!TryCreateAndInitWasapi(device, AudioClientShareMode.Shared, sharedWave, latencyMs, out var sharedOut, out var sharedEvent))
-        {
-            throw new InvalidOperationException($"No se pudo inicializar WASAPI en '{device.FriendlyName}'. Verifica que el dispositivo esté conectado y activo.");
-        }
-
-        AttachAndPlay(device, sharedOut!, sourceOwner, toneProcessor, isDoP: false, seekAction, positionGetter, durationGetter);
-
-        var sharedNote = requestExclusive
-            ? $"Modo exclusivo no disponible en {device.FriendlyName}; usando WASAPI Compartido ({mixFormat.SampleRate / 1000.0:0.#} kHz/32-bit float)."
-            : $"WASAPI Compartido: {mixFormat.SampleRate / 1000.0:0.#} kHz / 32-bit float en {device.FriendlyName}";
-
-        return new WasapiPlaybackReport(
-            device.FriendlyName,
-            IsExclusive: false,
-            IsEventDriven: sharedEvent,
-            IsDoP: false,
-            IsDsdSource: isDsdSource,
-            IsBitPerfect: false,
-            IsResampled: sharedResampled,
-            OutputSampleRate: mixFormat.SampleRate,
-            OutputBitDepth: 32,
-            OutputChannels: sharedPipeline.WaveFormat.Channels,
-            SourceCodec: sourceCodec,
-            DecodeLabel: sharedResampled ? $"{decodeBaseLabel} -> {mixFormat.SampleRate / 1000.0:0.#} kHz" : decodeBaseLabel,
-            Summary: sharedNote);
     }
 
     private void AttachAndPlay(
         MMDevice device,
         WasapiOut wasapiOut,
+        BufferedAudioSampleProvider? bufferedSource,
         IDisposable sourceOwner,
         ToneControlSampleProvider? toneProcessor,
         bool isDoP,
@@ -611,6 +647,7 @@ public sealed class WasapiPlaybackEngine : IDisposable
             _manualStop = false;
             _activeDevice = device;
             _wasapiOut = wasapiOut;
+            _bufferedSource = bufferedSource;
             _activeSource = sourceOwner;
             _toneProcessor = toneProcessor;
             _isDoPActive = isDoP;
